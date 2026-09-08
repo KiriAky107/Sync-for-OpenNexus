@@ -15,6 +15,7 @@ from fastapi import FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 from .database import Database, password_hash, row, rows, run
 from .models import Commit, Login, Refresh, Upload, VaultCreate
@@ -257,9 +258,15 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                            offset: int = Query(ge=0), authorization: str = Header(default="")):
         data = bytearray()
         async for chunk in request.stream():
-            data.extend(chunk)
-            if len(data) > 1048576:
+            if len(chunk) > 1048576 - len(data):
                 raise SyncError(413, "CHUNK_TOO_LARGE")
+            data.extend(chunk)
+        # Keep the transaction and durable write on one worker thread. A slow
+        # database lock or fsync must not block this worker's ASGI event loop.
+        return await run_in_threadpool(persist_upload_chunk, vault_id, upload_id,
+                                       authorization, offset, data)
+
+    def persist_upload_chunk(vault_id, upload_id, authorization, offset, data):
         with db.transaction() as conn:
             upload = authorized_upload(conn, vault_id, upload_id, authorization)
             reconcile_staging(upload)

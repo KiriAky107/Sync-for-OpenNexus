@@ -97,3 +97,66 @@ def test_readiness_fails_closed_when_object_storage_unavailable(env):
     store.put = unavailable
     assert client.get("/ready").status_code == 503
     assert client.get("/health").status_code == 200
+
+
+def test_slow_upload_fsync_does_not_block_worker_health(env, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import os
+
+    client, _, _, _, _ = env
+    auth, _, base = setup(client)
+    info = client.post(base + "/uploads", headers=auth,
+                       json={"content_hash": hashlib.sha256(b"abc").hexdigest(), "size": 3}).json()
+    path = base + "/uploads/" + info["upload_id"]
+    entered, release = Event(), Event()
+    original = os.fsync
+
+    def delayed(fd):
+        entered.set()
+        if not release.wait(10):
+            raise TimeoutError("test did not release fsync")
+        original(fd)
+
+    monkeypatch.setattr(os, "fsync", delayed)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(client.put, path + "?offset=0", headers=auth, content=b"abc")
+        try:
+            assert entered.wait(5)
+            # Both requests use this TestClient's single ASGI event loop.
+            health = pool.submit(client.get, "/health").result(timeout=2)
+            assert health.status_code == 200
+            assert not pending.done()
+        finally:
+            release.set()
+        assert pending.result(timeout=5).json() == {"offset": 3}
+    assert client.get(path, headers=auth).json()["offset"] == 3
+    assert client.post(path + "/complete", headers=auth).status_code == 200
+
+
+def test_upload_limits_and_failed_fsync_preserve_durable_offset(env, monkeypatch):
+    import os
+
+    client, _, _, staging, _ = env
+    auth, _, base = setup(client)
+    data = b"a" * 1048576
+    info = client.post(base + "/uploads", headers=auth,
+                       json={"content_hash": hashlib.sha256(data).hexdigest(), "size": len(data)}).json()
+    path = base + "/uploads/" + info["upload_id"]
+    rejected = client.put(path + "?offset=0", headers=auth, content=data + b"x")
+    assert rejected.status_code == 413
+    assert rejected.json()["error"]["code"] == "CHUNK_TOO_LARGE"
+    assert (staging / info["upload_id"]).stat().st_size == 0
+
+    def failed(_fd):
+        raise OSError("controlled fsync failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", failed)
+        with pytest.raises(OSError, match="controlled fsync failure"):
+            client.put(path + "?offset=0", headers=auth, content=data)
+    # Failure propagated from the thread; the SQL transaction did not advance.
+    assert client.get(path, headers=auth).json()["offset"] == 0
+    assert (staging / info["upload_id"]).stat().st_size == 0
+    assert client.put(path + "?offset=0", headers=auth, content=data).json() == {"offset": len(data)}
+    assert client.post(path + "/complete", headers=auth).status_code == 200
