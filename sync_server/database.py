@@ -16,6 +16,7 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS revisions (vault_id TEXT NOT NULL, sequence BIGINT NOT NULL, file_id TEXT NOT NULL, base_revision BIGINT NOT NULL, path TEXT NOT NULL, path_key TEXT NOT NULL, operation TEXT NOT NULL, hash TEXT, size BIGINT NOT NULL, device_id TEXT NOT NULL, operation_id TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(vault_id, sequence), UNIQUE(vault_id, operation_id))",
     "CREATE TABLE IF NOT EXISTS files (vault_id TEXT NOT NULL, file_id TEXT NOT NULL, sequence BIGINT NOT NULL, path_key TEXT NOT NULL, deleted INTEGER NOT NULL, PRIMARY KEY(vault_id, file_id))",
     "CREATE TABLE IF NOT EXISTS login_limits (key TEXT PRIMARY KEY, started BIGINT NOT NULL, attempts INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS upload_receipts (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, device_id TEXT NOT NULL, hash TEXT NOT NULL, completed BIGINT NOT NULL)",
 ]
 
 
@@ -27,11 +28,16 @@ def password_hash(password: str, salt: str | None = None) -> str:
 
 class Database:
     def __init__(self, url: str):
-        self.engine = create_engine(url)
+        options = {"connect_args": {"connect_timeout": 2, "options": "-c statement_timeout=30000 -c lock_timeout=5000"},
+                   "pool_timeout": 2, "pool_pre_ping": True} if url.startswith("postgresql") else {}
+        self.engine = create_engine(url, **options)
         self.sqlite = self.engine.dialect.name == "sqlite"
 
     def migrate(self):
         with self.transaction() as conn:
+            if not self.sqlite:
+                # Serialize factory startup migrations across the supported workers.
+                conn.execute(text("SELECT pg_advisory_xact_lock(1330534488)"))
             conn.execute(text(SCHEMA[0]))
             version = conn.execute(text("SELECT version FROM schema_version")).scalar()
             if version not in {None, 1}:

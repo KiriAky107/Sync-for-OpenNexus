@@ -4,11 +4,17 @@ import hashlib
 import json
 import secrets
 import time
+import os
+import tempfile
+import asyncio
+from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, FileResponse
+from starlette.background import BackgroundTask
 
 from .database import Database, password_hash, row, rows, run
 from .models import Commit, Login, Refresh, Upload, VaultCreate
@@ -26,12 +32,36 @@ def digest(value: str) -> str:
 def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=time.time):
     db.migrate()
     staging.mkdir(parents=True, exist_ok=True)
-    app = FastAPI(title="NotesAgent Sync", version="1.0.0")
+    @asynccontextmanager
+    async def lifespan(_app):
+        from .maintenance import cleanup_expired_uploads
+        stopping = asyncio.Event()
+
+        async def maintain():
+            while not stopping.is_set():
+                try:
+                    await asyncio.to_thread(cleanup_expired_uploads, db, staging, now=int(clock()))
+                except Exception:
+                    logging.getLogger(__name__).error("UPLOAD_MAINTENANCE_FAILED")
+                try:
+                    await asyncio.wait_for(stopping.wait(), timeout=60)
+                except TimeoutError:
+                    pass
+
+        worker = asyncio.create_task(maintain())
+        try:
+            yield
+        finally:
+            stopping.set()
+            await worker
+
+    app = FastAPI(title="OpenNexus Sync", version="1.0.0", lifespan=lifespan)
     app.state.database = db
 
     @app.exception_handler(SyncError)
     async def error(_request, exc):
-        return JSONResponse({"error": {"code": exc.code, "details": exc.details}}, status_code=exc.status)
+        headers = {"Retry-After": "60"} if exc.status == 429 else {}
+        return JSONResponse({"error": {"code": exc.code, "details": exc.details}}, status_code=exc.status, headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def invalid(_request, _exc):
@@ -66,12 +96,41 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     def health():
         return {"status": "ok"}
 
-    @app.get("/ready")
-    def ready():
+    def readiness_probe():
         with db.transaction() as conn:
             if row(conn, "SELECT version FROM schema_version")["version"] != 1:
                 raise SyncError(503, "SCHEMA_INCOMPATIBLE")
-        return {"status": "ready", "schema": 1}
+        key = "health-probe/" + secrets.token_hex(16)
+        try:
+            with tempfile.TemporaryFile(dir=staging) as local:
+                local.write(b"opennexus-ready")
+                local.flush()
+                os.fsync(local.fileno())
+                local.seek(0)
+                if local.read() != b"opennexus-ready":
+                    raise OSError("STAGING_INTEGRITY")
+            objects.put(key, b"opennexus-ready")
+            if objects.get(key) != b"opennexus-ready":
+                raise OSError("STORAGE_INTEGRITY")
+        finally:
+            objects.delete(key)
+
+    ready_lock = asyncio.Lock()
+    ready_cache = {"until": 0.0, "ok": False}
+
+    @app.get("/ready")
+    async def ready():
+        async with ready_lock:
+            if time.monotonic() >= ready_cache["until"]:
+                try:
+                    await asyncio.wait_for(asyncio.to_thread(readiness_probe), timeout=3)
+                    ready_cache["ok"] = True
+                except Exception:
+                    ready_cache["ok"] = False
+                ready_cache["until"] = time.monotonic() + 5
+            if not ready_cache["ok"]:
+                raise SyncError(503, "DEPENDENCY_UNAVAILABLE")
+            return {"status": "ready", "schema": 1}
 
     @app.get("/sync/v1/handshake")
     def handshake(protocol: int = 1):
@@ -171,10 +230,26 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             raise SyncError(404, "UPLOAD_EXPIRED")
         return upload
 
+    def reconcile_staging(upload):
+        path = staging / upload["id"]
+        try:
+            length = path.stat().st_size
+            if length < upload["offset_bytes"]:
+                raise SyncError(409, "UPLOAD_DAMAGED", {"restart_required": True})
+            if length > upload["offset_bytes"]:
+                with path.open("r+b") as stream:
+                    stream.truncate(upload["offset_bytes"])
+                    stream.flush()
+                    os.fsync(stream.fileno())
+        except OSError:
+            raise SyncError(409, "UPLOAD_DAMAGED", {"restart_required": True}) from None
+        return path
+
     @app.get("/sync/v1/vaults/{vault_id}/uploads/{upload_id}")
     def upload_status(vault_id: str, upload_id: str, authorization: str = Header(default="")):
         with db.transaction() as conn:
             upload = authorized_upload(conn, vault_id, upload_id, authorization)
+            reconcile_staging(upload)
             return {"offset": upload["offset_bytes"], "size": upload["size"], "expires": upload["expires"]}
 
     @app.put("/sync/v1/vaults/{vault_id}/uploads/{upload_id}")
@@ -187,6 +262,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                 raise SyncError(413, "CHUNK_TOO_LARGE")
         with db.transaction() as conn:
             upload = authorized_upload(conn, vault_id, upload_id, authorization)
+            reconcile_staging(upload)
             if offset != upload["offset_bytes"]:
                 raise SyncError(409, "UPLOAD_OFFSET", {"offset": upload["offset_bytes"]})
             if offset + len(data) > upload["size"]:
@@ -212,15 +288,24 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     @app.post("/sync/v1/vaults/{vault_id}/uploads/{upload_id}/complete")
     def complete_upload(vault_id: str, upload_id: str, authorization: str = Header(default="")):
         with db.transaction() as conn:
+            session, _ = vault(conn, vault_id, authorization, lock=True)
+            receipt = row(conn, "SELECT hash FROM upload_receipts WHERE id=:id AND vault_id=:v AND device_id=:d",
+                          id=upload_id, v=vault_id, d=session["device_id"])
+            if receipt:
+                return {"complete": True, "content_hash": receipt["hash"]}
             upload = authorized_upload(conn, vault_id, upload_id, authorization)
-            data = (staging / upload_id).read_bytes()
-            if len(data) != upload["size"] or len(data) != upload["offset_bytes"] or hashlib.sha256(data).hexdigest() != upload["hash"]:
+            path = reconcile_staging(upload)
+            with path.open("rb") as stream:
+                content_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+            if upload["size"] != upload["offset_bytes"] or content_hash != upload["hash"]:
                 raise SyncError(422, "OBJECT_INTEGRITY")
             exists = row(conn, "SELECT hash FROM objects WHERE vault_id=:v AND hash=:h", v=vault_id, h=upload["hash"])
             if not exists:
-                objects.put(vault_id + "/" + upload["hash"], data)
-                run(conn, "INSERT INTO objects VALUES (:v,:h,:size,:now)", v=vault_id, h=upload["hash"], size=len(data), now=int(clock()))
-                run(conn, "UPDATE vaults SET used=used+:size WHERE id=:v", size=len(data), v=vault_id)
+                objects.put_file(vault_id + "/" + upload["hash"], path, upload["hash"])
+                run(conn, "INSERT INTO objects VALUES (:v,:h,:size,:now)", v=vault_id, h=upload["hash"], size=upload["size"], now=int(clock()))
+                run(conn, "UPDATE vaults SET used=used+:size WHERE id=:v", size=upload["size"], v=vault_id)
+            run(conn, "INSERT INTO upload_receipts VALUES (:id,:v,:d,:h,:now)", id=upload_id,
+                v=vault_id, d=session["device_id"], h=upload["hash"], now=int(clock()))
             run(conn, "DELETE FROM uploads WHERE id=:id", id=upload_id)
         (staging / upload_id).unlink(missing_ok=True)
         return {"complete": True, "content_hash": upload["hash"]}
@@ -288,9 +373,28 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             obj = row(conn, "SELECT * FROM objects WHERE vault_id=:v AND hash=:h", v=vault_id, h=content_hash)
             if not obj:
                 raise SyncError(404, "OBJECT_NOT_FOUND")
-            data = objects.get(vault_id + "/" + content_hash)
-            if len(data) != obj["size"] or hashlib.sha256(data).hexdigest() != content_hash:
+            expected_size = obj["size"]
+        # Verify before returning any bytes, without holding a database transaction
+        # or buffering an entire attachment in RAM.
+        temporary = tempfile.NamedTemporaryFile(prefix="download-", dir=staging, delete=False)
+        path = Path(temporary.name)
+        try:
+            size, checksum = 0, hashlib.sha256()
+            with temporary, objects.open(vault_id + "/" + content_hash) as source:
+                while chunk := source.read(1048576):
+                    size += len(chunk)
+                    if size > expected_size:
+                        raise SyncError(503, "STORAGE_INTEGRITY")
+                    checksum.update(chunk)
+                    temporary.write(chunk)
+            if size != expected_size or checksum.hexdigest() != content_hash:
                 raise SyncError(503, "STORAGE_INTEGRITY")
-            return Response(data, media_type="application/octet-stream", headers={"ETag": '"' + content_hash + '"', "Cache-Control": "private, no-store"})
+            return FileResponse(path, media_type="application/octet-stream",
+                headers={"ETag": '"' + content_hash + '"', "Cache-Control": "private, no-store"},
+                background=BackgroundTask(path.unlink, missing_ok=True))
+        except BaseException:
+            temporary.close()
+            path.unlink(missing_ok=True)
+            raise
 
     return app
