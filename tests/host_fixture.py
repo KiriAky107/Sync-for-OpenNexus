@@ -1,0 +1,40 @@
+"""Single-worker localhost fixture for real Rust HTTP interoperability, never deployment."""
+import asyncio
+import json
+from pathlib import Path
+import socket
+import sys
+import threading
+import uvicorn
+from sync_server.app import create_app
+from sync_server.database import Database
+from sync_server.storage import DiskObjects
+
+
+def main():
+    root = Path(sys.argv[1])
+    if not root.is_dir() or not (root / '.opennexus-test').is_file():
+        raise SystemExit('ISOLATED_TEST_ROOT_REQUIRED')
+    database = Database('sqlite:///' + str(root / 'sync.sqlite3'))
+    app = create_app(database, DiskObjects(root / 'objects'), root / 'staging')
+    database.add_user('rust-fixture', 'controlled-fixture-password')
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    sock.listen(128)
+    server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False, timeout_graceful_shutdown=1))
+    def parent():
+        sys.stdin.buffer.read()
+        server.should_exit = True
+    threading.Thread(target=parent, daemon=True).start()
+    async def run():
+        task = asyncio.create_task(server.serve(sockets=[sock]))
+        while not server.started:
+            if task.done(): await task; raise RuntimeError('FIXTURE_START_FAILED')
+            await asyncio.sleep(.01)
+        print(json.dumps({'port': sock.getsockname()[1]}), flush=True)
+        await task
+    try: asyncio.run(run())
+    finally: sock.close(); database.engine.dispose()
+
+
+if __name__ == '__main__': main()
