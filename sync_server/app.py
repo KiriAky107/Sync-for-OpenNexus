@@ -19,6 +19,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .database import Database, password_hash, row, rows, run
 from .models import Commit, Login, Refresh, Upload, VaultCreate
+from .readiness import Readiness
 
 
 class SyncError(Exception):
@@ -116,22 +117,13 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         finally:
             objects.delete(key)
 
-    ready_lock = asyncio.Lock()
-    ready_cache = {"until": 0.0, "ok": False}
+    readiness = Readiness(readiness_probe)
 
     @app.get("/ready")
     async def ready():
-        async with ready_lock:
-            if time.monotonic() >= ready_cache["until"]:
-                try:
-                    await asyncio.wait_for(asyncio.to_thread(readiness_probe), timeout=3)
-                    ready_cache["ok"] = True
-                except Exception:
-                    ready_cache["ok"] = False
-                ready_cache["until"] = time.monotonic() + 5
-            if not ready_cache["ok"]:
-                raise SyncError(503, "DEPENDENCY_UNAVAILABLE")
-            return {"status": "ready", "schema": 1}
+        if not await readiness.check():
+            raise SyncError(503, "DEPENDENCY_UNAVAILABLE")
+        return {"status": "ready", "schema": 1}
 
     @app.get("/sync/v1/handshake")
     def handshake(protocol: int = 1):
