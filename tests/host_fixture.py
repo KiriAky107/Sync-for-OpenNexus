@@ -18,6 +18,18 @@ def main():
     database = Database('sqlite:///' + str(root / 'sync.sqlite3'))
     app = create_app(database, DiskObjects(root / 'objects'), root / 'staging')
     database.add_user('rust-fixture', 'controlled-fixture-password')
+    @app.middleware('http')
+    async def interrupt_upload(request, call_next):
+        response = await call_next(request)
+        if (root / 'interrupt-upload').exists() and request.method == 'PUT' and '/uploads/' in request.url.path and response.status_code == 200:
+            offset = int(request.query_params.get('offset', '0')) + int(request.headers.get('content-length', '0'))
+            if offset and offset % (10 * 1024 * 1024) == 0:
+                marker = root / 'upload-boundary'
+                marker.write_text(str(offset), encoding='ascii')
+                for _ in range(600):
+                    if not marker.exists(): break
+                    await asyncio.sleep(.05)
+        return response
     sock = socket.socket()
     sock.bind(('127.0.0.1', 0))
     sock.listen(128)
