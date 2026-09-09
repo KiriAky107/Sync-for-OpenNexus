@@ -73,6 +73,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     @app.exception_handler(SyncError)
     async def error(_request, exc):
         headers = {"Retry-After": "60"} if exc.status == 429 else {}
+        if exc.status == 503:
+            headers["X-OpenNexus-Worker"] = worker_id
         return JSONResponse({"error": {"code": exc.code, "details": exc.details}}, status_code=exc.status, headers=headers)
 
     @app.exception_handler(RequestValidationError)
@@ -116,6 +118,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             if row(conn, "SELECT version FROM schema_version")["version"] != 1:
                 raise SyncError(503, "SCHEMA_INCOMPATIBLE")
         key = "health-probe/" + secrets.token_hex(16)
+        stored = False
         try:
             with tempfile.TemporaryFile(dir=staging) as local:
                 local.write(b"opennexus-ready")
@@ -125,17 +128,20 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                 if local.read() != b"opennexus-ready":
                     raise OSError("STAGING_INTEGRITY")
             objects.put(key, b"opennexus-ready")
+            stored = True
             if objects.get(key) != b"opennexus-ready":
                 raise OSError("STORAGE_INTEGRITY")
         finally:
-            objects.delete(key)
+            if stored:
+                objects.delete(key)
 
-    readiness = Readiness(readiness_probe)
+    readiness = Readiness(readiness_probe, cache_seconds=1)
 
     @app.get("/ready")
-    async def ready():
+    async def ready(response: Response):
         if not await readiness.check():
             raise SyncError(503, "DEPENDENCY_UNAVAILABLE")
+        response.headers["X-OpenNexus-Worker"] = worker_id
         return {"status": "ready", "schema": 1}
 
     @app.get("/sync/v1/handshake")

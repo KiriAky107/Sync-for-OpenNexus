@@ -105,7 +105,9 @@ def test_readiness_fails_closed_when_object_storage_unavailable(env):
     def unavailable(*args):
         raise OSError("simulated outage")
     store.put = unavailable
-    assert client.get("/ready").status_code == 503
+    unavailable = client.get("/ready")
+    assert unavailable.status_code == 503
+    assert len(unavailable.headers["X-OpenNexus-Worker"]) == 16
     assert client.get("/health").status_code == 200
 
 
