@@ -1,9 +1,4 @@
-"""Four concurrent upload/download probes; run only against a disposable test service.
-
-Credentials JSON is [{"username": "...", "password": "..."}, ...] for two
-existing test accounts. Never writes credentials, tokens or response bodies to reports.
-This is a transfer probe, not a claim of S-09 completion or an RSS measurement.
-"""
+"""四个并发上传/下载探针；仅针对一次性测试服务运行。两个现有测试帐户的凭据 JSON 为 [{"username": "...", "password": "..."}, ...]。切勿将凭证、令牌或响应正文写入报告。这是一个转移探针，不是 S-09 完成或 RSS 测量的声明。"""
 import argparse
 import asyncio
 import hashlib
@@ -30,7 +25,7 @@ async def checked(client, method, path, **kwargs):
 
 
 def block(index, offset, length):
-    # Distinct, repeatable contents per stream and offset, without whole-file buffers.
+    # 每个流和偏移量具有独特的、可重复的内容，没有整个文件缓冲区。
     seed = hashlib.sha256(f"20260908:{index}:{offset}".encode()).digest()
     return (seed * ((length + len(seed) - 1) // len(seed)))[:length]
 
@@ -116,7 +111,7 @@ async def probe(base_url, credentials, *, size=100 * CHUNK):
                         checksum.update(data)
                 if received != size or checksum.hexdigest() != sha:
                     raise ProbeFailure("DOWNLOAD_INTEGRITY")
-                # Another account must not be able to read this object's bytes.
+                # 另一个帐户必须无法读取此对象的字节。
                 denied = await admin.get(base + "/objects/" + sha, headers=sessions[1 - index // 2])
                 if denied.status_code not in (403, 404):
                     raise ProbeFailure("ACCOUNT_ISOLATION_FAILED")
@@ -127,7 +122,7 @@ async def probe(base_url, credentials, *, size=100 * CHUNK):
 
         tasks = [asyncio.create_task(transfer(*job)) for job in jobs]
         try:
-            # Bound preparation: a failed peer must not leave the others waiting forever.
+            # 绑定准备：失败的对等体不能让其他对等体永远等待。
             async def all_ready():
                 for _ in jobs:
                     await ready.get()
@@ -175,7 +170,7 @@ def main():
         credentials = json.loads(args.credentials.read_text(encoding="utf-8"))
         report = asyncio.run(asyncio.wait_for(probe(args.url, credentials), timeout=1800))
     except Exception as error:
-        # Exception text may contain credentials or response data; log only its type.
+        # 异常文本可能包含凭据或响应数据；仅记录其类型。
         report["error_type"] = type(error).__name__
     finally:
         args.output.parent.mkdir(parents=True, exist_ok=True)

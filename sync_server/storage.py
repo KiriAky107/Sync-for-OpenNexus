@@ -67,7 +67,7 @@ class S3Objects:
         self.bucket = bucket
 
     def ensure_bucket(self) -> bool:
-        """Create the configured bucket when absent; never alter an existing bucket."""
+        """不在时创建配置的桶；切勿更改现有存储桶。"""
         from botocore.exceptions import ClientError
 
         try:
@@ -108,10 +108,7 @@ class S3Objects:
 
     def put_file(self, key: str, path: Path, content_hash: str):
         with path.open("rb") as stream:
-            # Objects are capped at 100 MiB, well below S3's 5 GiB single-PUT
-            # limit. A direct streaming request has one explicit connection
-            # lifetime; constructing a transfer manager per completion can
-            # retain pooled MinIO connections under repeated multi-worker use.
+            # 对象的上限为 100 MiB，远低于 S3 的 5 GiB 单 PUT 限制。直接流请求有一个显式的连接生命周期；每次完成构建一个传输管理器可以在重复的多工作线程使用下保留池化的 MinIO 连接。
             self.client.put_object(
                 Bucket=self.bucket,
                 Key=key,

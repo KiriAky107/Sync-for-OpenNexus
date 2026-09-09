@@ -1,4 +1,4 @@
-"""Bound readiness work even when a synchronous dependency ignores its timeout."""
+"""即使同步依赖项忽略其超时，绑定准备工作也会起作用。"""
 import asyncio
 import time
 
@@ -15,8 +15,7 @@ class Readiness:
 
     @staticmethod
     def consume(task):
-        # A request can time out or disconnect before the synchronous probe ends.
-        # Retrieve late exceptions without logging dependency messages/secrets.
+        # 在同步探测结束之前，请求可能会超时或断开连接。检索晚期异常而不记录依赖项消息/秘密。
         if not task.cancelled():
             task.exception()
 
@@ -28,8 +27,7 @@ class Readiness:
                 self.running = asyncio.create_task(asyncio.to_thread(self.probe))
                 self.running.add_done_callback(self.consume)
             try:
-                # Cancelling a to_thread await does not stop its OS thread. Keep
-                # the task alive so subsequent requests reuse the same probe.
+                # 取消 to_thread 等待不会停止其 OS 线程。保持任务处于活动状态，以便后续请求重用相同的探测器。
                 await asyncio.wait_for(asyncio.shield(self.running), self.timeout)
                 self.ok = True
             except Exception:

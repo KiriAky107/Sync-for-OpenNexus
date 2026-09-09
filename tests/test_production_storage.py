@@ -1,4 +1,4 @@
-"""Fault vectors for the production IO paths; database still uses an isolated fixture."""
+"""生产 IO 路径的故障向量；数据库仍然使用独立的固定装置。"""
 import hashlib
 import pytest
 from fastapi.testclient import TestClient
@@ -72,7 +72,7 @@ def test_download_is_verified_before_response_and_temp_files_are_removed(env):
     client, _, store, staging, _ = env
     auth, _, base = setup(client)
     sha = upload(client, base, auth)
-    # This path must use streaming open(), never the full-object get().
+    # 此路径必须使用流式 open()，而不是完整对象 get()。
     store.get = lambda key: pytest.fail("full-object read")
     response = client.get(base + "/objects/" + sha, headers=auth)
     assert response.content == b"controlled note"
@@ -135,7 +135,7 @@ def test_slow_upload_fsync_does_not_block_worker_health(env, monkeypatch):
         pending = pool.submit(client.put, path + "?offset=0", headers=auth, content=b"abc")
         try:
             assert entered.wait(5)
-            # Both requests use this TestClient's single ASGI event loop.
+            # 两个请求都使用此 TestClient 的单个 ASGI 事件循环。
             health = pool.submit(client.get, "/health").result(timeout=2)
             assert health.status_code == 200
             assert not pending.done()
@@ -167,7 +167,7 @@ def test_upload_limits_and_failed_fsync_preserve_durable_offset(env, monkeypatch
         patch.setattr(os, "fsync", failed)
         with pytest.raises(OSError, match="controlled fsync failure"):
             client.put(path + "?offset=0", headers=auth, content=data)
-    # Failure propagated from the thread; the SQL transaction did not advance.
+    # 从线程传播故障； SQL交易没有推进。
     assert client.get(path, headers=auth).json()["offset"] == 0
     assert (staging / info["upload_id"]).stat().st_size == 0
     assert client.put(path + "?offset=0", headers=auth, content=data).json() == {"offset": len(data)}

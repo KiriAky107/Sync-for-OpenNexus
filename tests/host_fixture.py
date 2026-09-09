@@ -1,4 +1,4 @@
-"""Single-worker localhost fixture for real Rust HTTP interoperability, never deployment."""
+"""用于真正 Rust HTTP 互操作性的单工作程序本地主机固定装置，无需部署。"""
 import asyncio
 import json
 from pathlib import Path

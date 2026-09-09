@@ -29,7 +29,7 @@ class SyncError(Exception):
 
 
 class StagingDamaged(Exception):
-    """Internal signal used to commit cleanup before returning UPLOAD_DAMAGED."""
+    """用于在返回 UPLOAD_DAMAGED 之前提交清理的内部信号。"""
 
     def __init__(self, upload):
         self.upload_id = upload["id"]
@@ -131,8 +131,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
 
     @app.get("/health")
     def health(response: Response):
-        # An ephemeral identifier lets deployment probes prove that both
-        # configured workers receive traffic without exposing host identity.
+        # 临时标识符可以让部署探测证明两个配置的工作线程都接收流量，而不会暴露主机身份。
         response.headers["X-OpenNexus-Worker"] = worker_id
         return {"status": "ok"}
 
@@ -281,8 +280,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         return path
 
     def discard_damaged_upload(damaged):
-        # Re-open after the failed operation released its transaction. Deleting
-        # inside the failed transaction would be rolled back with the response.
+        # 失败的操作释放其事务后重新打开。失败事务中的删除操作将随响应一起回滚。
         with db.transaction() as conn:
             suffix = " FOR UPDATE" if not db.sqlite else ""
             row(conn, "SELECT id FROM vaults WHERE id=:v" + suffix, v=damaged.vault_id)
@@ -294,8 +292,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                 device=damaged.device_id,
             )
             if upload:
-                # File first: interruption leaves a row whose quota reservation
-                # can still be released by expiry maintenance.
+                # 文件优先：中断留下一行，其配额保留仍可通过到期维护释放。
                 (staging / upload["id"]).unlink(missing_ok=True)
                 run(conn, "DELETE FROM uploads WHERE id=:id", id=upload["id"])
 
@@ -321,8 +318,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             if len(chunk) > 1048576 - len(data):
                 raise SyncError(413, "CHUNK_TOO_LARGE")
             data.extend(chunk)
-        # Keep the transaction and durable write on one worker thread. A slow
-        # database lock or fsync must not block this worker's ASGI event loop.
+        # 将事务和持久写入保留在一个工作线程上。缓慢的数据库锁定或 fsync 不得阻止此工作线程的 ASGI 事件循环。
         return await run_in_threadpool(persist_upload_chunk, vault_id, upload_id,
                                        authorization, offset, data)
 
@@ -447,8 +443,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             if not obj:
                 raise SyncError(404, "OBJECT_NOT_FOUND")
             expected_size = obj["size"]
-        # Verify before returning any bytes, without holding a database transaction
-        # or buffering an entire attachment in RAM.
+        # 在返回任何字节之前进行验证，而不保留数据库事务或在 RAM 中缓冲整个附件。
         temporary = tempfile.NamedTemporaryFile(prefix="download-", dir=staging, delete=False)
         path = Path(temporary.name)
         try:

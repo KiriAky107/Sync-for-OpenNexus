@@ -1,4 +1,4 @@
-"""Real localhost HTTP harness; SQLite/DiskObjects, not production topology."""
+"""真实的 localhost HTTP 测试框架；使用 SQLite/DiskObjects，并非生产拓扑。"""
 import asyncio
 import json
 import socket

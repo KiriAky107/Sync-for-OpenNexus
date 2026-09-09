@@ -1,4 +1,4 @@
-"""Consistent PostgreSQL/S3 backup and empty-instance restore operations."""
+"""一致的 PostgreSQL/S3 备份和空实例恢复操作。"""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ TABLES: dict[str, tuple[str, ...]] = {
 
 
 class OperationsError(RuntimeError):
-    """Stable operator-facing failure without credentials or response bodies."""
+    """稳定的面向操作员的故障，无需凭证或响应主体。"""
 
 
 def sha256_file(path: Path) -> str:

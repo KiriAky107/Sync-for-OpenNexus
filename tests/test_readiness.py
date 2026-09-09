@@ -1,4 +1,4 @@
-"""Bounded worker use, request cancellation, cached failures and recovery."""
+"""有限制的工作线程使用、请求取消、缓存故障和恢复。"""
 import asyncio
 from threading import Event
 
@@ -30,7 +30,7 @@ def test_timeout_and_cancel_never_spawn_overlapping_dependency_probes():
         finally:
             release.set()
             await asyncio.gather(ready.running, return_exceptions=True)
-        # A completed failed probe does not prevent a new healthy attempt.
+        # 已完成的失败探测不会阻止新的健康尝试。
         ready.probe = lambda: None
         assert await ready.check() is True
     asyncio.run(run())

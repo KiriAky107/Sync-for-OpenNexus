@@ -36,7 +36,7 @@ class Database:
     def migrate(self):
         with self.transaction() as conn:
             if not self.sqlite:
-                # Serialize factory startup migrations across the supported workers.
+                # 在受支持的工作人员之间序列化工厂启动迁移。
                 conn.execute(text("SELECT pg_advisory_xact_lock(1330534488)"))
             conn.execute(text(SCHEMA[0]))
             version = conn.execute(text("SELECT version FROM schema_version")).scalar()

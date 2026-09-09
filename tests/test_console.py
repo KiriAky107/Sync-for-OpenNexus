@@ -1,4 +1,4 @@
-"""Same-origin Vue console delivery and its public account workflow."""
+"""同源Vue控制台交付及其公众号工作流程。"""
 
 import re
 
