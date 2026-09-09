@@ -16,6 +16,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
+from starlette.staticfiles import StaticFiles
 
 from .database import Database, password_hash, row, rows, run
 from .models import Commit, Login, Refresh, Upload, VaultCreate
@@ -69,6 +70,28 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     app = FastAPI(title="OpenNexus Sync", version="1.0.0", lifespan=lifespan)
     app.state.database = db
     worker_id = secrets.token_hex(8)
+    console_root = Path(__file__).with_name("static")
+
+    @app.middleware("http")
+    async def console_security(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/console"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; script-src 'self'; style-src 'self'; "
+                "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+                "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+            )
+            response.headers["Referrer-Policy"] = "no-referrer"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+    @app.get("/", include_in_schema=False)
+    def console():
+        return FileResponse(console_root / "index.html", media_type="text/html; charset=utf-8")
+
+    app.mount("/console", StaticFiles(directory=console_root, html=True), name="sync-console")
 
     @app.exception_handler(SyncError)
     async def error(_request, exc):

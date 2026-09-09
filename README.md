@@ -2,6 +2,14 @@
 
 协议及限制见 [Sync v1](../docs/contracts/Sync-v1契约.md)。服务独立于 AI Core，生产入口仅支持 PostgreSQL 和 S3。当前尚未达到 M3 运维退出条件。
 
+服务根路径 `/` 与 `/console/` 提供同源的 Vue 3 + TypeScript Sync Console，可查看服务健康与依赖就绪状态，并使用普通 Sync 账户管理自己的 Vault 和设备。页面只调用公开的 Sync v1 API；密码在请求发出前从输入框清除，访问和刷新令牌只保留在页面内存，刷新或关闭页面即丢弃。控制台源码位于 `console/`，生产静态文件由 Docker 多阶段构建生成。
+
+```powershell
+cd console
+pnpm install --frozen-lockfile
+pnpm build
+```
+
 ## 隔离测试
 
 ```powershell

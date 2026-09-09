@@ -1,0 +1,21 @@
+{
+  "name": "opennexus-sync-console",
+  "private": true,
+  "version": "0.3.0-alpha.1",
+  "packageManager": "pnpm@10.28.0",
+  "type": "module",
+  "scripts": {
+    "build": "vue-tsc --noEmit && vite build",
+    "dev": "vite",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "vue": "3.5.21"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.4",
+    "typescript": "5.9.2",
+    "vite": "6.1.0",
+    "vue-tsc": "2.2.12"
+  }
+}
