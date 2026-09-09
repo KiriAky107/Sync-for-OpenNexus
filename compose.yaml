@@ -2,13 +2,13 @@ services:
   database:
     image: postgres:17.6
     environment:
-      POSTGRES_USER: notesagent
-      POSTGRES_DB: notesagent
+      POSTGRES_USER: opennexus
+      POSTGRES_DB: opennexus
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
     volumes:
       - postgres:/var/lib/postgresql/data
     healthcheck:
-      test: [CMD-SHELL, "pg_isready -U notesagent -d notesagent"]
+      test: [CMD-SHELL, "pg_isready -U opennexus -d opennexus"]
       interval: 5s
       retries: 20
   objects:
@@ -19,18 +19,34 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?required}
     volumes:
       - objects:/data
+  initialize:
+    build: .
+    command: ["/service/.venv/bin/python", "-m", "sync_server", "initialize"]
+    environment:
+      SYNC_DATABASE_URL: ${SYNC_DATABASE_URL:?required}
+      SYNC_S3_ENDPOINT: http://objects:9000
+      SYNC_S3_BUCKET: opennexus
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?required}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?required}
+      AWS_DEFAULT_REGION: us-east-1
+    depends_on:
+      database:
+        condition: service_healthy
+      objects:
+        condition: service_started
+    restart: "no"
   sync:
     build: .
     environment:
       SYNC_DATABASE_URL: ${SYNC_DATABASE_URL:?required}
       SYNC_S3_ENDPOINT: http://objects:9000
-      SYNC_S3_BUCKET: notesagent
+      SYNC_S3_BUCKET: opennexus
       AWS_ACCESS_KEY_ID: ${SYNC_ACCESS_KEY_ID:?required}
       AWS_SECRET_ACCESS_KEY: ${SYNC_SECRET_ACCESS_KEY:?required}
       AWS_DEFAULT_REGION: us-east-1
     depends_on:
-      database:
-        condition: service_healthy
+      initialize:
+        condition: service_completed_successfully
     volumes:
       - staging:/staging
     ports:

@@ -66,6 +66,37 @@ class S3Objects:
                                                  retries={"max_attempts": 0}))
         self.bucket = bucket
 
+    def ensure_bucket(self) -> bool:
+        """Create the configured bucket when absent; never alter an existing bucket."""
+        from botocore.exceptions import ClientError
+
+        try:
+            self.client.head_bucket(Bucket=self.bucket)
+            return False
+        except ClientError as error:
+            code = str(error.response.get("Error", {}).get("Code", ""))
+            status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code not in {"404", "NoSuchBucket", "NotFound"} and status != 404:
+                raise
+        self.client.create_bucket(Bucket=self.bucket)
+        return True
+
+    def is_empty(self) -> bool:
+        response = self.client.list_objects_v2(Bucket=self.bucket, MaxKeys=1)
+        return not response.get("Contents")
+
+    def delete_many(self, keys: list[str]) -> None:
+        for start in range(0, len(keys), 1000):
+            batch = keys[start : start + 1000]
+            if batch:
+                self.client.delete_objects(
+                    Bucket=self.bucket,
+                    Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
+                )
+
+    def delete_bucket(self) -> None:
+        self.client.delete_bucket(Bucket=self.bucket)
+
     def put(self, key: str, data: bytes):
         self.client.put_object(Bucket=self.bucket, Key=key, Body=data,
                                Metadata={"sha256": hashlib.sha256(data).hexdigest()})
