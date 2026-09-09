@@ -22,7 +22,7 @@ uv run pytest
 
 `initialize` 命令已通过真实 PostgreSQL/MinIO 的空实例与重复运行验证，并由 Compose 的一次性服务调用。MinIO 同步账号仍须由管理员创建并限制到 `opennexus` Bucket，`.env` 中的 root 与同步凭据必须不同。
 
-2026-09-08 已在独立 Docker 项目完成真实 PostgreSQL/MinIO 双 worker 测试部署，修正基础镜像中的 `sync` 系统用户名冲突。测试专用 HTTP 地址、故障检查、完整验收缺口与运维入口见[验收报告](../docs/development/OpenNexus验收报告-2026-09-08.md)。仓库通用 Compose 的生产 TLS 与备份恢复仍未通过发布验收。
+2026-09-08 已在独立 Docker 项目完成真实 PostgreSQL/MinIO 双 worker 测试部署，修正基础镜像中的 `sync` 系统用户名冲突。测试专用 HTTP 地址、故障检查、完整验收缺口与运维入口见[验收报告](../docs/development/OpenNexus验收报告-2026-09-08.md)。S-07 已在原生 PostgreSQL 17.11/MinIO 实例完成 1 GiB/10,000 文件的删除源实例与空实例恢复；当前机器没有 Docker CLI，因此修改后的 Compose 编排仍需在发布环境复演，生产 TLS 也仍是独立发布门。
 
 ## 备份与空实例恢复
 
