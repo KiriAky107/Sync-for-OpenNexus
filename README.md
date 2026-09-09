@@ -25,7 +25,9 @@ uv run pytest
 1. 将 `.env.example` 复制为 `.env`，生成独立数据库、MinIO 管理和同步访问凭据。数据库 URL 使用 `postgresql+psycopg://…`，其中密码须 URL 编码。
 2. 执行 `docker compose up -d`。一次性 `initialize` 服务等待依赖后幂等创建 schema 与 `opennexus` Bucket；重复运行只检查并补齐缺失资源，不覆盖已有行或对象。长期运行的 `sync` 服务继续使用只限该 Bucket 的同步账号，不使用 MinIO root 身份。
 3. 执行 `docker compose run --rm sync /service/.venv/bin/python -m sync_server create-user`，密码交互输入，不放命令参数。
-4. 使用 Caddy 示例配置 TLS。8080 仅绑定本机，不直接公开明文 HTTP。
+4. 使用 Caddy 示例配置 TLS。默认通过 `SYNC_BIND_ADDRESS=127.0.0.1` 与
+   `SYNC_PORT=8080` 只监听本机。仅限已授权的隔离测试阶段将监听地址改为
+   `0.0.0.0` 并直接开放测试端口；该模式不作为生产发布配置。
 5. 检查 `/health`、`/ready` 及经过授权的上传/读取；`/ready` 探测数据库 schema、staging 读写和对象存储测试前缀。
 
 `initialize` 命令已通过真实 PostgreSQL/MinIO 的空实例与重复运行验证，并由 Compose 的一次性服务调用。MinIO 同步账号仍须由管理员创建并限制到 `opennexus` Bucket，`.env` 中的 root 与同步凭据必须不同。
