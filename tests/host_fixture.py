@@ -29,6 +29,12 @@ def main():
                 for _ in range(600):
                     if not marker.exists(): break
                     await asyncio.sleep(.05)
+        if (root / 'interrupt-revision').exists() and request.method == 'POST' and request.url.path.endswith('/revisions') and response.status_code == 200:
+            marker = root / 'revision-committed'
+            marker.write_text('committed', encoding='ascii')
+            for _ in range(600):
+                if not (root / 'interrupt-revision').exists(): break
+                await asyncio.sleep(.05)
         return response
     sock = socket.socket()
     sock.bind(('127.0.0.1', 0))
