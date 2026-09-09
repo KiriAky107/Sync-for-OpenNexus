@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, Header, Query, Request
+from fastapi import FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.background import BackgroundTask
@@ -59,6 +59,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
 
     app = FastAPI(title="OpenNexus Sync", version="1.0.0", lifespan=lifespan)
     app.state.database = db
+    worker_id = secrets.token_hex(8)
 
     @app.exception_handler(SyncError)
     async def error(_request, exc):
@@ -95,7 +96,10 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         return {"access_token": access, "refresh_token": refresh, "expires_in": 900, "device_id": device_id}
 
     @app.get("/health")
-    def health():
+    def health(response: Response):
+        # An ephemeral identifier lets deployment probes prove that both
+        # configured workers receive traffic without exposing host identity.
+        response.headers["X-OpenNexus-Worker"] = worker_id
         return {"status": "ok"}
 
     def readiness_probe():

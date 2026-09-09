@@ -33,8 +33,17 @@ def main():
         db.add_user(args.username or input("用户名: "), getpass.getpass("密码（至少12字符）: "))
     elif args.command == "serve":
         import uvicorn
+        host = os.environ.get("SYNC_HOST", "0.0.0.0")
+        if host not in {"0.0.0.0", "127.0.0.1", "::1"}:
+            raise SystemExit("SYNC_HOST 仅允许通配或本机回环地址")
+        try:
+            port = int(os.environ.get("SYNC_PORT", "8080"))
+        except ValueError as error:
+            raise SystemExit("SYNC_PORT 必须为有效端口") from error
+        if not 1 <= port <= 65535:
+            raise SystemExit("SYNC_PORT 必须为有效端口")
         uvicorn.run("sync_server.__main__:application", factory=True, workers=args.workers,
-                    host="0.0.0.0", port=8080, access_log=False)
+                    host=host, port=port, access_log=False)
     elif args.command == "cleanup-uploads":
         from .maintenance import cleanup_expired_uploads
         print(cleanup_expired_uploads(db, Path(os.environ["SYNC_STAGING_DIR"])))
