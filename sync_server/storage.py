@@ -76,11 +76,18 @@ class S3Objects:
             return stream.read()
 
     def put_file(self, key: str, path: Path, content_hash: str):
-        from boto3.s3.transfer import TransferConfig
         with path.open("rb") as stream:
-            self.client.upload_fileobj(stream, self.bucket, key,
-                ExtraArgs={"Metadata": {"sha256": content_hash}},
-                Config=TransferConfig(use_threads=False, max_concurrency=1))
+            # Objects are capped at 100 MiB, well below S3's 5 GiB single-PUT
+            # limit. A direct streaming request has one explicit connection
+            # lifetime; constructing a transfer manager per completion can
+            # retain pooled MinIO connections under repeated multi-worker use.
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=stream,
+                ContentLength=path.stat().st_size,
+                Metadata={"sha256": content_hash},
+            )
 
     @contextmanager
     def open(self, key: str):
