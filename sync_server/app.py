@@ -27,6 +27,15 @@ class SyncError(Exception):
         self.status, self.code, self.details = status, code, details or {}
 
 
+class StagingDamaged(Exception):
+    """Internal signal used to commit cleanup before returning UPLOAD_DAMAGED."""
+
+    def __init__(self, upload):
+        self.upload_id = upload["id"]
+        self.vault_id = upload["vault_id"]
+        self.device_id = upload["device_id"]
+
+
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -232,22 +241,48 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         try:
             length = path.stat().st_size
             if length < upload["offset_bytes"]:
-                raise SyncError(409, "UPLOAD_DAMAGED", {"restart_required": True})
+                raise StagingDamaged(upload)
             if length > upload["offset_bytes"]:
                 with path.open("r+b") as stream:
                     stream.truncate(upload["offset_bytes"])
                     stream.flush()
                     os.fsync(stream.fileno())
         except OSError:
-            raise SyncError(409, "UPLOAD_DAMAGED", {"restart_required": True}) from None
+            raise StagingDamaged(upload) from None
         return path
+
+    def discard_damaged_upload(damaged):
+        # Re-open after the failed operation released its transaction. Deleting
+        # inside the failed transaction would be rolled back with the response.
+        with db.transaction() as conn:
+            suffix = " FOR UPDATE" if not db.sqlite else ""
+            row(conn, "SELECT id FROM vaults WHERE id=:v" + suffix, v=damaged.vault_id)
+            upload = row(
+                conn,
+                "SELECT id FROM uploads WHERE id=:id AND vault_id=:v AND device_id=:device",
+                id=damaged.upload_id,
+                v=damaged.vault_id,
+                device=damaged.device_id,
+            )
+            if upload:
+                # File first: interruption leaves a row whose quota reservation
+                # can still be released by expiry maintenance.
+                (staging / upload["id"]).unlink(missing_ok=True)
+                run(conn, "DELETE FROM uploads WHERE id=:id", id=upload["id"])
+
+    def upload_damaged(damaged):
+        discard_damaged_upload(damaged)
+        raise SyncError(409, "UPLOAD_DAMAGED", {"restart_required": True})
 
     @app.get("/sync/v1/vaults/{vault_id}/uploads/{upload_id}")
     def upload_status(vault_id: str, upload_id: str, authorization: str = Header(default="")):
-        with db.transaction() as conn:
-            upload = authorized_upload(conn, vault_id, upload_id, authorization)
-            reconcile_staging(upload)
-            return {"offset": upload["offset_bytes"], "size": upload["size"], "expires": upload["expires"]}
+        try:
+            with db.transaction() as conn:
+                upload = authorized_upload(conn, vault_id, upload_id, authorization)
+                reconcile_staging(upload)
+                return {"offset": upload["offset_bytes"], "size": upload["size"], "expires": upload["expires"]}
+        except StagingDamaged as damaged:
+            upload_damaged(damaged)
 
     @app.put("/sync/v1/vaults/{vault_id}/uploads/{upload_id}")
     async def upload_chunk(vault_id: str, upload_id: str, request: Request,
@@ -263,23 +298,26 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                                        authorization, offset, data)
 
     def persist_upload_chunk(vault_id, upload_id, authorization, offset, data):
-        with db.transaction() as conn:
-            upload = authorized_upload(conn, vault_id, upload_id, authorization)
-            reconcile_staging(upload)
-            if offset != upload["offset_bytes"]:
-                raise SyncError(409, "UPLOAD_OFFSET", {"offset": upload["offset_bytes"]})
-            if offset + len(data) > upload["size"]:
-                raise SyncError(413, "OBJECT_TOO_LARGE")
-            # 先刷盘后提交 offset；崩溃重试覆盖未确认尾部，不能重复追加。
-            import os
-            with (staging / upload_id).open("r+b") as stream:
-                stream.seek(offset)
-                stream.write(data)
-                stream.truncate()
-                stream.flush()
-                os.fsync(stream.fileno())
-            run(conn, "UPDATE uploads SET offset_bytes=:offset WHERE id=:id", id=upload_id, offset=offset + len(data))
-            return {"offset": offset + len(data)}
+        try:
+            with db.transaction() as conn:
+                upload = authorized_upload(conn, vault_id, upload_id, authorization)
+                reconcile_staging(upload)
+                if offset != upload["offset_bytes"]:
+                    raise SyncError(409, "UPLOAD_OFFSET", {"offset": upload["offset_bytes"]})
+                if offset + len(data) > upload["size"]:
+                    raise SyncError(413, "OBJECT_TOO_LARGE")
+                # 先刷盘后提交 offset；崩溃重试覆盖未确认尾部，不能重复追加。
+                import os
+                with (staging / upload_id).open("r+b") as stream:
+                    stream.seek(offset)
+                    stream.write(data)
+                    stream.truncate()
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                run(conn, "UPDATE uploads SET offset_bytes=:offset WHERE id=:id", id=upload_id, offset=offset + len(data))
+                return {"offset": offset + len(data)}
+        except StagingDamaged as damaged:
+            upload_damaged(damaged)
 
     @app.delete("/sync/v1/vaults/{vault_id}/uploads/{upload_id}", status_code=204)
     def cancel_upload(vault_id: str, upload_id: str, authorization: str = Header(default="")):
@@ -290,26 +328,29 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
 
     @app.post("/sync/v1/vaults/{vault_id}/uploads/{upload_id}/complete")
     def complete_upload(vault_id: str, upload_id: str, authorization: str = Header(default="")):
-        with db.transaction() as conn:
-            session, _ = vault(conn, vault_id, authorization, lock=True)
-            receipt = row(conn, "SELECT hash FROM upload_receipts WHERE id=:id AND vault_id=:v AND device_id=:d",
-                          id=upload_id, v=vault_id, d=session["device_id"])
-            if receipt:
-                return {"complete": True, "content_hash": receipt["hash"]}
-            upload = authorized_upload(conn, vault_id, upload_id, authorization)
-            path = reconcile_staging(upload)
-            with path.open("rb") as stream:
-                content_hash = hashlib.file_digest(stream, "sha256").hexdigest()
-            if upload["size"] != upload["offset_bytes"] or content_hash != upload["hash"]:
-                raise SyncError(422, "OBJECT_INTEGRITY")
-            exists = row(conn, "SELECT hash FROM objects WHERE vault_id=:v AND hash=:h", v=vault_id, h=upload["hash"])
-            if not exists:
-                objects.put_file(vault_id + "/" + upload["hash"], path, upload["hash"])
-                run(conn, "INSERT INTO objects VALUES (:v,:h,:size,:now)", v=vault_id, h=upload["hash"], size=upload["size"], now=int(clock()))
-                run(conn, "UPDATE vaults SET used=used+:size WHERE id=:v", size=upload["size"], v=vault_id)
-            run(conn, "INSERT INTO upload_receipts VALUES (:id,:v,:d,:h,:now)", id=upload_id,
-                v=vault_id, d=session["device_id"], h=upload["hash"], now=int(clock()))
-            run(conn, "DELETE FROM uploads WHERE id=:id", id=upload_id)
+        try:
+            with db.transaction() as conn:
+                session, _ = vault(conn, vault_id, authorization, lock=True)
+                receipt = row(conn, "SELECT hash FROM upload_receipts WHERE id=:id AND vault_id=:v AND device_id=:d",
+                              id=upload_id, v=vault_id, d=session["device_id"])
+                if receipt:
+                    return {"complete": True, "content_hash": receipt["hash"]}
+                upload = authorized_upload(conn, vault_id, upload_id, authorization)
+                path = reconcile_staging(upload)
+                with path.open("rb") as stream:
+                    content_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+                if upload["size"] != upload["offset_bytes"] or content_hash != upload["hash"]:
+                    raise SyncError(422, "OBJECT_INTEGRITY")
+                exists = row(conn, "SELECT hash FROM objects WHERE vault_id=:v AND hash=:h", v=vault_id, h=upload["hash"])
+                if not exists:
+                    objects.put_file(vault_id + "/" + upload["hash"], path, upload["hash"])
+                    run(conn, "INSERT INTO objects VALUES (:v,:h,:size,:now)", v=vault_id, h=upload["hash"], size=upload["size"], now=int(clock()))
+                    run(conn, "UPDATE vaults SET used=used+:size WHERE id=:v", size=upload["size"], v=vault_id)
+                run(conn, "INSERT INTO upload_receipts VALUES (:id,:v,:d,:h,:now)", id=upload_id,
+                    v=vault_id, d=session["device_id"], h=upload["hash"], now=int(clock()))
+                run(conn, "DELETE FROM uploads WHERE id=:id", id=upload_id)
+        except StagingDamaged as damaged:
+            upload_damaged(damaged)
         (staging / upload_id).unlink(missing_ok=True)
         return {"complete": True, "content_hash": upload["hash"]}
 

@@ -23,7 +23,7 @@ def env(tmp_path):
 
 
 def test_offset_reconciliation_never_acknowledges_missing_disk_bytes(env):
-    client, _, _, staging, _ = env
+    client, db, _, staging, _ = env
     auth, _, base = setup(client)
     info = client.post(base + "/uploads", headers=auth,
                        json={"content_hash": hashlib.sha256(b"abc").hexdigest(), "size": 3}).json()
@@ -35,7 +35,17 @@ def test_offset_reconciliation_never_acknowledges_missing_disk_bytes(env):
     assert local.read_bytes() == b"a"
     local.write_bytes(b"")
     assert client.get(path, headers=auth).json()["error"]["code"] == "UPLOAD_DAMAGED"
-    assert client.put(path + "?offset=1", headers=auth, content=b"bc").status_code == 409
+    assert not local.exists()
+    assert client.put(path + "?offset=1", headers=auth, content=b"bc").status_code == 404
+    with db.transaction() as conn:
+        assert row(conn, "SELECT COUNT(*) AS n FROM uploads")["n"] == 0
+    replacement = client.post(
+        base + "/uploads",
+        headers=auth,
+        json={"content_hash": hashlib.sha256(b"abc").hexdigest(), "size": 3},
+    ).json()
+    assert replacement["complete"] is False
+    assert replacement["upload_id"] != info["upload_id"]
 
 
 def test_complete_retry_has_durable_receipt_and_charges_once(env):
