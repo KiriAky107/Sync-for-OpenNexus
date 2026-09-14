@@ -153,3 +153,45 @@ def test_login_limits_and_protocol(env):
     for _ in range(10):
         assert client.post("/sync/v1/auth/sessions", json={"username": "unknown", "password": "controlled-fixture-password", "device_name": "fixture"}).status_code == 401
     assert client.post("/sync/v1/auth/sessions", json={"username": "unknown", "password": "controlled-fixture-password", "device_name": "fixture"}).status_code == 429
+
+
+def test_bootstrap_password_rotates_until_account_is_fixed(tmp_path):
+    db = Database("sqlite:///" + str(tmp_path / "bootstrap.db"))
+    db.migrate()
+    first = db.prepare_bootstrap_user()
+    second = db.prepare_bootstrap_user()
+    assert first["username"] == second["username"] == "admin"
+    assert first["password"] != second["password"]
+
+    app = create_app(db, DiskObjects(tmp_path / "objects"), tmp_path / "staging")
+    with TestClient(app) as client:
+        old = client.post("/sync/v1/auth/sessions", json={
+            "username": "admin", "password": first["password"], "device_name": "旧启动",
+        })
+        assert old.status_code == 401
+        login = client.post("/sync/v1/auth/sessions", json={
+            "username": "admin", "password": second["password"], "device_name": "首次登录",
+        })
+        assert login.status_code == 200
+        assert login.json()["must_change_credentials"] is True
+        headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+        blocked = client.get("/sync/v1/vaults", headers=headers)
+        assert blocked.status_code == 403
+        assert blocked.json()["error"]["code"] == "CREDENTIAL_CHANGE_REQUIRED"
+
+        changed = client.put("/sync/v1/account/credentials", headers=headers, json={
+            "current_password": second["password"],
+            "username": "owner",
+            "password": "fixed-production-password",
+        })
+        assert changed.json() == {"username": "owner", "credentials_fixed": True}
+        assert client.post("/sync/v1/vaults", headers=headers, json={"name": "固定账户"}).status_code == 200
+
+    assert db.prepare_bootstrap_user() is None
+    with TestClient(app) as client:
+        login = client.post("/sync/v1/auth/sessions", json={
+            "username": "owner", "password": "fixed-production-password", "device_name": "重启后",
+        })
+        assert login.status_code == 200
+        assert login.json()["must_change_credentials"] is False
+    db.engine.dispose()

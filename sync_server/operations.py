@@ -47,6 +47,7 @@ TABLES: dict[str, tuple[str, ...]] = {
     "files": ("vault_id", "file_id", "sequence", "path_key", "deleted"),
     "login_limits": ("key", "started", "attempts"),
     "upload_receipts": ("id", "vault_id", "device_id", "hash", "completed"),
+    "bootstrap_state": ("user_id", "created"),
 }
 
 

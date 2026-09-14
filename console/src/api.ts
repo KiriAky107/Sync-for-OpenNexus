@@ -10,6 +10,7 @@ export interface Session {
   refresh_token: string
   expires_in: number
   device_id: string
+  must_change_credentials: boolean
 }
 
 export interface Vault {
@@ -39,6 +40,7 @@ export class SyncApi {
   private access = ''
   private refresh = ''
   deviceId = ''
+  mustChangeCredentials = false
 
   get signedIn() { return Boolean(this.access) }
 
@@ -80,6 +82,7 @@ export class SyncApi {
     this.access = session.access_token
     this.refresh = session.refresh_token
     this.deviceId = session.device_id
+    this.mustChangeCredentials = Boolean(session.must_change_credentials)
   }
 
   async status(): Promise<ServiceStatus> {
@@ -103,7 +106,7 @@ export class SyncApi {
     }
   }
 
-  async login(username: string, password: string, deviceName: string): Promise<void> {
+  async login(username: string, password: string, deviceName: string): Promise<boolean> {
     const response = await this.raw('/sync/v1/auth/sessions', {
       method: 'POST',
       body: JSON.stringify({ username, password, device_name: deviceName }),
@@ -115,6 +118,17 @@ export class SyncApi {
     const session = await safeJson<Session>(response)
     if (!session) throw new Error('INVALID_RESPONSE')
     this.accept(session)
+    return this.mustChangeCredentials
+  }
+
+  async changeCredentials(currentPassword: string, username: string, password: string) {
+    const result = await this.request<{ username: string; credentials_fixed: boolean }>(
+      '/sync/v1/account/credentials', {
+        method: 'PUT', body: JSON.stringify({ current_password: currentPassword, username, password }),
+      }, false,
+    )
+    this.mustChangeCredentials = false
+    return result
   }
 
   vaults() { return this.request<{ items: Vault[] }>('/sync/v1/vaults') }
@@ -136,5 +150,6 @@ export class SyncApi {
     this.access = ''
     this.refresh = ''
     this.deviceId = ''
+    this.mustChangeCredentials = false
   }
 }

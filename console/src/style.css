@@ -90,6 +90,7 @@ main { width: min(1180px, calc(100% - 48px)); margin: 0 auto; position: relative
 .protocol-grid strong { font-size: 18px; font-weight: 600; }
 .protocol-grid span { color: var(--muted); font-size: 11px; }
 .login-card { padding: 31px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); position: relative; overflow: hidden; }
+.credential-card { width: min(100%, 560px); margin: 32px auto 0; }
 .card-glow { position: absolute; width: 210px; height: 210px; right: -100px; top: -120px; border-radius: 50%; background: var(--accent); filter: blur(60px); opacity: .08; }
 .card-heading { display: flex; gap: 14px; align-items: center; margin-bottom: 28px; position: relative; }
 .card-heading p, .surface-heading p { margin: 0 0 3px; color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }

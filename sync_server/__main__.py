@@ -82,6 +82,14 @@ def main():
         db.add_user(args.username or input("用户名: "), getpass.getpass("密码（至少12字符）: "))
     elif args.command == "serve":
         db.migrate()
+        bootstrap = db.prepare_bootstrap_user()
+        if bootstrap:
+            print(json.dumps({
+                "event": "SYNC_BOOTSTRAP_CREDENTIALS",
+                "username": bootstrap["username"],
+                "password": bootstrap["password"],
+                "must_change_credentials": True,
+            }), flush=True)
         import uvicorn
         host = os.environ.get("SYNC_HOST", "0.0.0.0")
         if host not in {"0.0.0.0", "127.0.0.1", "::1"}:

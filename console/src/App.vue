@@ -11,6 +11,11 @@ const username = ref('')
 const password = ref('')
 const deviceName = ref('OpenNexus Web Console')
 const sessionLabel = ref('')
+const credentialsRequired = ref(false)
+const currentPassword = ref('')
+const newUsername = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
 const newVaultName = ref('')
 const vaults = ref<Vault[]>([])
 const devices = ref<Device[]>([])
@@ -72,6 +77,10 @@ function leaveConsole() {
   password.value = ''
   vaults.value = []
   devices.value = []
+  credentialsRequired.value = false
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
 }
 
 async function signIn() {
@@ -82,14 +91,38 @@ async function signIn() {
   const device = deviceName.value.trim()
   password.value = ''
   try {
-    await api.login(account, secret, device)
+    credentialsRequired.value = await api.login(account, secret, device)
     sessionLabel.value = `${account} · ${device}`
+    newUsername.value = account
     signedIn.value = true
-    await loadAccount()
-    notify('设备会话已建立')
+    if (!credentialsRequired.value) await loadAccount()
+    notify(credentialsRequired.value ? '请立即固定账户与密码' : '设备会话已建立')
   } catch (error) {
     leaveConsole()
     notify(error instanceof Error ? error.message : 'LOGIN_FAILED', true)
+  } finally { busy.value = false }
+}
+
+async function fixCredentials() {
+  if (busy.value) return
+  if (newPassword.value !== confirmPassword.value) {
+    notify('两次输入的新密码不一致', true)
+    return
+  }
+  busy.value = true
+  const oldSecret = currentPassword.value
+  const nextSecret = newPassword.value
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  try {
+    const result = await api.changeCredentials(oldSecret, newUsername.value.trim(), nextSecret)
+    credentialsRequired.value = false
+    sessionLabel.value = `${result.username} · ${deviceName.value.trim()}`
+    await loadAccount()
+    notify('账户与密码已固定；以后重启不会再随机更换')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'CREDENTIAL_CHANGE_FAILED', true)
   } finally { busy.value = false }
 }
 
@@ -198,6 +231,22 @@ onBeforeUnmount(() => {
         <button class="secondary-button" type="button" :disabled="busy" @click="logout">退出登录</button>
       </div>
 
+      <section v-if="credentialsRequired" class="login-card credential-card" aria-labelledby="credential-title">
+        <div class="card-heading">
+          <span class="lock-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg></span>
+          <div><p>首次登录</p><h2 id="credential-title">固定账户凭据</h2></div>
+        </div>
+        <p class="surface-intro">当前密码只对本次服务启动有效。修改账户和密码后，凭据将写入数据库并在后续重启中保持不变。</p>
+        <form @submit.prevent="fixCredentials">
+          <label>当前随机密码<input v-model="currentPassword" type="password" autocomplete="current-password" minlength="12" maxlength="256" required></label>
+          <label>新账户<input v-model="newUsername" autocomplete="username" maxlength="80" required></label>
+          <label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+          <label>确认新密码<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+          <button class="primary-button" type="submit" :disabled="busy || !currentPassword || !newPassword || !confirmPassword">{{ busy ? '正在保存…' : '保存并固定凭据' }}</button>
+        </form>
+      </section>
+
+      <template v-else>
       <div class="metric-grid">
         <article><span>远端 Vault</span><strong>{{ vaults.length }}</strong><small>当前账户可访问</small></article>
         <article><span>已使用空间</span><strong>{{ formatBytes(used) }}</strong><small>总配额 {{ formatBytes(quota) }}</small></article>
@@ -242,6 +291,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
       </div>
+      </template>
     </section>
   </main>
 

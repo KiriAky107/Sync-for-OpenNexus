@@ -24,11 +24,12 @@ uv run pytest
 
 1. 将 `.env.example` 复制为 `.env`，生成独立数据库、MinIO 管理和同步访问凭据。数据库 URL 使用 `postgresql+psycopg://…`，其中密码须 URL 编码。
 2. 执行 `docker compose up -d`。一次性 `initialize` 服务等待依赖后幂等创建 schema 与 `opennexus` Bucket；重复运行只检查并补齐缺失资源，不覆盖已有行或对象。长期运行的 `sync` 服务继续使用只限该 Bucket 的同步账号，不使用 MinIO root 身份。
-3. 执行 `docker compose run --rm sync /service/.venv/bin/python -m sync_server create-user`，密码交互输入，不放命令参数。
-4. 使用 Caddy 示例配置 TLS。默认通过 `SYNC_BIND_ADDRESS=127.0.0.1` 与
+3. 全新数据库会生成账户 `admin` 和本次启动专用的随机密码。使用 `docker compose logs sync` 查找 `SYNC_BOOTSTRAP_CREDENTIALS`；随机密码不会写入镜像、环境变量或数据库明文。只要账户尚未固定，服务每次重启都会更换该密码并撤销旧会话。
+4. 使用随机密码首次登录控制台后，必须立即修改账户名和密码。保存成功后凭据写入数据库，此后服务重启不再更换。已有正式账户的升级实例不会额外创建默认账户。仍可使用 `create-user` 运维命令增加独立账户，密码通过终端交互输入。
+5. 使用 Caddy 示例配置 TLS。默认通过 `SYNC_BIND_ADDRESS=127.0.0.1` 与
    `SYNC_PORT=8080` 只监听本机。仅限已授权的隔离测试阶段将监听地址改为
    `0.0.0.0` 并直接开放测试端口；该模式不作为生产发布配置。
-5. 检查 `/health`、`/ready` 及经过授权的上传/读取；`/ready` 探测数据库 schema、staging 读写和对象存储测试前缀。
+6. 检查 `/health`、`/ready` 及经过授权的上传/读取；`/ready` 探测数据库 schema、staging 读写和对象存储测试前缀。
 
 `initialize` 命令已通过真实 PostgreSQL/MinIO 的空实例与重复运行验证，并由 Compose 的一次性服务调用。MinIO 同步账号仍须由管理员创建并限制到 `opennexus` Bucket，`.env` 中的 root 与同步凭据必须不同。
 
