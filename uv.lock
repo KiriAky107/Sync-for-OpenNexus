@@ -225,7 +225,7 @@ wheels = [
 
 [[package]]
 name = "notesagent-sync"
-version = "0.3.1a1"
+version = "0.3.1a2"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
