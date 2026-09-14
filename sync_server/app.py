@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
 from .database import Database, password_hash, row, rows, run
-from .models import Commit, Login, Refresh, Upload, VaultCreate
+from .models import Commit, CredentialChange, Login, Refresh, Upload, VaultCreate
 from .readiness import Readiness
 
 
@@ -105,11 +105,14 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         # Pydantic 的原始错误可能带请求正文，禁止回显密码或笔记。
         return JSONResponse({"error": {"code": "INVALID_REQUEST", "details": {}}}, status_code=422)
 
-    def identity(conn, authorization):
+    def identity(conn, authorization, *, allow_bootstrap=False):
         token = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
         session = row(conn, "SELECT s.*, d.user_id, d.revoked FROM sessions s JOIN devices d ON d.id=s.device_id WHERE s.token=:token", token=digest(token))
         if not session or session["revoked"] or session["expires"] <= clock():
             raise SyncError(401, "SESSION_EXPIRED")
+        if not allow_bootstrap and row(conn, "SELECT user_id FROM bootstrap_state WHERE user_id=:user",
+                                       user=session["user_id"]):
+            raise SyncError(403, "CREDENTIAL_CHANGE_REQUIRED")
         return session
 
     def vault(conn, vault_id, authorization, *, lock=False):
@@ -127,7 +130,11 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         run(conn, "INSERT INTO sessions VALUES (:token,:refresh,:device,:expires,:refresh_expires)",
             token=digest(access), refresh=digest(refresh), device=device_id,
             expires=int(clock()) + 900, refresh_expires=int(clock()) + 30 * 86400)
-        return {"access_token": access, "refresh_token": refresh, "expires_in": 900, "device_id": device_id}
+        device = row(conn, "SELECT user_id FROM devices WHERE id=:id", id=device_id)
+        must_change = bool(row(conn, "SELECT user_id FROM bootstrap_state WHERE user_id=:user",
+                               user=device["user_id"]))
+        return {"access_token": access, "refresh_token": refresh, "expires_in": 900,
+                "device_id": device_id, "must_change_credentials": must_change}
 
     @app.get("/health")
     def health(response: Response):
@@ -210,8 +217,30 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     @app.delete("/sync/v1/auth/sessions", status_code=204)
     def logout(authorization: str = Header(default="")):
         with db.transaction() as conn:
-            session = identity(conn, authorization)
+            session = identity(conn, authorization, allow_bootstrap=True)
             run(conn, "DELETE FROM sessions WHERE token=:token", token=session["token"])
+
+    @app.put("/sync/v1/account/credentials")
+    def change_credentials(body: CredentialChange, authorization: str = Header(default="")):
+        with db.transaction() as conn:
+            session = identity(conn, authorization, allow_bootstrap=True)
+            user = row(conn, "SELECT * FROM users WHERE id=:id", id=session["user_id"])
+            expected = user["password"]
+            if not secrets.compare_digest(
+                    password_hash(body.current_password, expected.split(":")[0]), expected):
+                raise SyncError(401, "CURRENT_PASSWORD_INVALID")
+            conflict = row(conn, "SELECT id FROM users WHERE username=:name AND id<>:id",
+                           name=body.username, id=user["id"])
+            if conflict:
+                raise SyncError(409, "USERNAME_TAKEN")
+            run(conn, "UPDATE users SET username=:name,password=:password WHERE id=:id",
+                name=body.username, password=password_hash(body.password), id=user["id"])
+            run(conn, "DELETE FROM bootstrap_state WHERE user_id=:user", user=user["id"])
+            run(conn, "DELETE FROM sessions WHERE device_id IN (SELECT id FROM devices WHERE user_id=:user) AND token<>:token",
+                user=user["id"], token=session["token"])
+            run(conn, "UPDATE devices SET revoked=1 WHERE user_id=:user AND id<>:device",
+                user=user["id"], device=session["device_id"])
+            return {"username": body.username, "credentials_fixed": True}
 
     @app.get("/sync/v1/devices")
     def devices(authorization: str = Header(default="")):

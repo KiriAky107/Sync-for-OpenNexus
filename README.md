@@ -1,6 +1,6 @@
-# OpenNexus Sync 服务原型
+# OpenNexus Server Sync
 
-协议及限制见 [Sync v1](../docs/contracts/Sync-v1契约.md)。服务独立于 AI Core，生产入口仅支持 PostgreSQL 和 S3。当前尚未达到 M3 运维退出条件。
+当前发布版本为 **0.3.1-alpha.2**。协议及限制见 [Sync v1](../docs/contracts/Sync-v1契约.md)。服务独立于 AI Core，生产入口仅支持 PostgreSQL 和 S3 兼容对象存储。独立发布包包含服务源码、锁文件、Vue 3 + TypeScript 管理控制台静态文件、Dockerfile 与 Compose 模板，不包含任何 Vault、账户数据库、对象存储数据或部署密钥。
 
 服务根路径 `/` 与 `/console/` 提供同源的 Vue 3 + TypeScript Sync Console，可查看服务健康与依赖就绪状态，并使用普通 Sync 账户管理自己的 Vault 和设备。页面只调用公开的 Sync v1 API；密码在请求发出前从输入框清除，访问和刷新令牌只保留在页面内存，刷新或关闭页面即丢弃。控制台源码位于 `console/`，生产静态文件由 Docker 多阶段构建生成。
 
@@ -22,17 +22,26 @@ uv run pytest
 
 ## 自托管准备
 
+从发布页下载 `OpenNexus-Server-Sync-0.3.1-alpha.2.zip` 并核对 `SHA256.json` 后，将压缩包解压到独立目录。升级现有实例时先备份数据库、对象存储和 `.env`，再使用新版镜像替换 Sync 服务；不要用发行包覆盖持久化卷。
+
 1. 将 `.env.example` 复制为 `.env`，生成独立数据库、MinIO 管理和同步访问凭据。数据库 URL 使用 `postgresql+psycopg://…`，其中密码须 URL 编码。
 2. 执行 `docker compose up -d`。一次性 `initialize` 服务等待依赖后幂等创建 schema 与 `opennexus` Bucket；重复运行只检查并补齐缺失资源，不覆盖已有行或对象。长期运行的 `sync` 服务继续使用只限该 Bucket 的同步账号，不使用 MinIO root 身份。
-3. 执行 `docker compose run --rm sync /service/.venv/bin/python -m sync_server create-user`，密码交互输入，不放命令参数。
-4. 使用 Caddy 示例配置 TLS。默认通过 `SYNC_BIND_ADDRESS=127.0.0.1` 与
+3. 全新数据库会生成账户 `admin` 和本次启动专用的随机密码。使用 `docker compose logs sync` 查找 `SYNC_BOOTSTRAP_CREDENTIALS`；随机密码不会写入镜像、环境变量或数据库明文。只要账户尚未固定，服务每次重启都会更换该密码并撤销旧会话。
+4. 使用随机密码首次登录控制台后，必须立即修改账户名和密码。保存成功后凭据写入数据库，此后服务重启不再更换。已有正式账户的升级实例不会额外创建默认账户。仍可使用 `create-user` 运维命令增加独立账户，密码通过终端交互输入。
+5. 使用 Caddy 示例配置 TLS。默认通过 `SYNC_BIND_ADDRESS=127.0.0.1` 与
    `SYNC_PORT=8080` 只监听本机。仅限已授权的隔离测试阶段将监听地址改为
    `0.0.0.0` 并直接开放测试端口；该模式不作为生产发布配置。
-5. 检查 `/health`、`/ready` 及经过授权的上传/读取；`/ready` 探测数据库 schema、staging 读写和对象存储测试前缀。
+6. 检查 `/health`、`/ready` 及经过授权的上传/读取；`/ready` 探测数据库 schema、staging 读写和对象存储测试前缀。
+
+如需让保留旧数据的升级实例执行一次首次设置，可运行下列命令。它只新增临时管理员，不删除旧账户、Vault 或对象；命令输出的随机密码在固定前也会随服务重启而失效。
+
+```powershell
+docker compose run --rm sync /service/.venv/bin/python -m sync_server bootstrap-user
+```
 
 `initialize` 命令已通过真实 PostgreSQL/MinIO 的空实例与重复运行验证，并由 Compose 的一次性服务调用。MinIO 同步账号仍须由管理员创建并限制到 `opennexus` Bucket，`.env` 中的 root 与同步凭据必须不同。
 
-2026-09-08 已在独立 Docker 项目完成真实 PostgreSQL/MinIO 双 worker 测试部署，修正基础镜像中的 `sync` 系统用户名冲突。测试专用 HTTP 地址、故障检查、完整验收缺口与运维入口见[验收报告](../docs/development/OpenNexus验收报告-2026-09-08.md)。S-07 已在原生 PostgreSQL 17.11/MinIO 实例完成 1 GiB/10,000 文件的删除源实例与空实例恢复；当前机器没有 Docker CLI，因此修改后的 Compose 编排仍需在发布环境复演，生产 TLS 也仍是独立发布门。
+0.3.1-alpha.2 已使用真实 PostgreSQL/MinIO 双 worker 环境验证初始化、重复启动、固定凭据、健康检查和已有数据升级。测试专用 HTTP 地址、故障检查、完整验收记录与运维入口见[验收报告](../docs/development/OpenNexus验收报告-2026-09-08.md)。S-07 已在原生 PostgreSQL 17.11/MinIO 实例完成 1 GiB/10,000 文件的删除源实例与空实例恢复。测试阶段可以直接开放 HTTP 端口；生产上线仍需配置 TLS、访问控制、监控与异机备份。
 
 ## 备份与空实例恢复
 

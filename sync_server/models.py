@@ -20,6 +20,19 @@ class Refresh(DTO):
     refresh_token: str = Field(min_length=32, max_length=256)
 
 
+class CredentialChange(DTO):
+    current_password: str = Field(min_length=12, max_length=256)
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=12, max_length=256)
+
+    @field_validator("username")
+    @classmethod
+    def username_valid(cls, value):
+        if value != value.strip():
+            raise ValueError("账户名首尾不能包含空白")
+        return value
+
+
 class VaultCreate(DTO):
     name: str = Field(min_length=1, max_length=120)
 

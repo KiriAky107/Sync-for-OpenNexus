@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 import hashlib
 import secrets
+import time
 from sqlalchemy import create_engine, text
 
 SCHEMA = [
@@ -17,6 +18,7 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS files (vault_id TEXT NOT NULL, file_id TEXT NOT NULL, sequence BIGINT NOT NULL, path_key TEXT NOT NULL, deleted INTEGER NOT NULL, PRIMARY KEY(vault_id, file_id))",
     "CREATE TABLE IF NOT EXISTS login_limits (key TEXT PRIMARY KEY, started BIGINT NOT NULL, attempts INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS upload_receipts (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, device_id TEXT NOT NULL, hash TEXT NOT NULL, completed BIGINT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS bootstrap_state (user_id TEXT PRIMARY KEY, created BIGINT NOT NULL)",
 ]
 
 
@@ -65,6 +67,36 @@ class Database:
         with self.transaction() as conn:
             conn.execute(text("INSERT INTO users VALUES (:id,:name,:password)"),
                          {"id": secrets.token_hex(16), "name": username, "password": password_hash(password)})
+
+    def prepare_bootstrap_user(self, *, force=False):
+        """在账户尚未固定时生成本次服务启动专用的临时密码。"""
+        password = secrets.token_urlsafe(24)
+        with self.transaction() as conn:
+            state = row(conn, "SELECT user_id FROM bootstrap_state")
+            user = row(conn, "SELECT * FROM users WHERE id=:id", id=state["user_id"]) if state else None
+            if state and not user:
+                run(conn, "DELETE FROM bootstrap_state")
+                state = None
+            if not state:
+                if row(conn, "SELECT id FROM users LIMIT 1") and not force:
+                    return None
+                user_id = secrets.token_hex(16)
+                username = "admin"
+                if row(conn, "SELECT id FROM users WHERE username=:name", name=username):
+                    username = "bootstrap-admin-" + secrets.token_hex(3)
+                run(conn, "INSERT INTO users VALUES (:id,:name,:password)",
+                    id=user_id, name=username, password=password_hash(password))
+                run(conn, "INSERT INTO bootstrap_state VALUES (:user,:created)",
+                    user=user_id, created=int(time.time()))
+            else:
+                user_id = state["user_id"]
+                run(conn, "UPDATE users SET password=:password WHERE id=:id",
+                    password=password_hash(password), id=user_id)
+                run(conn, "DELETE FROM sessions WHERE device_id IN (SELECT id FROM devices WHERE user_id=:user)",
+                    user=user_id)
+                run(conn, "UPDATE devices SET revoked=1 WHERE user_id=:user", user=user_id)
+            account = row(conn, "SELECT username FROM users WHERE id=:id", id=user_id)
+            return {"username": account["username"], "password": password}
 
 
 def row(conn, sql, **params):
