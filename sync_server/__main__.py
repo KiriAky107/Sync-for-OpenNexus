@@ -24,7 +24,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["serve", "initialize", "migrate", "create-user", "cleanup-uploads", "backup", "restore"],
+        choices=["serve", "initialize", "migrate", "create-user", "bootstrap-user", "cleanup-uploads", "backup", "restore"],
     )
     parser.add_argument("--workers", type=int, choices=[1, 2], default=2)
     parser.add_argument("--username")
@@ -80,6 +80,15 @@ def main():
     elif args.command == "create-user":
         db.migrate()
         db.add_user(args.username or input("用户名: "), getpass.getpass("密码（至少12字符）: "))
+    elif args.command == "bootstrap-user":
+        db.migrate()
+        bootstrap = db.prepare_bootstrap_user(force=True)
+        print(json.dumps({
+            "event": "SYNC_BOOTSTRAP_CREDENTIALS",
+            "username": bootstrap["username"],
+            "password": bootstrap["password"],
+            "must_change_credentials": True,
+        }), flush=True)
     elif args.command == "serve":
         db.migrate()
         bootstrap = db.prepare_bootstrap_user()

@@ -68,7 +68,7 @@ class Database:
             conn.execute(text("INSERT INTO users VALUES (:id,:name,:password)"),
                          {"id": secrets.token_hex(16), "name": username, "password": password_hash(password)})
 
-    def prepare_bootstrap_user(self):
+    def prepare_bootstrap_user(self, *, force=False):
         """在账户尚未固定时生成本次服务启动专用的临时密码。"""
         password = secrets.token_urlsafe(24)
         with self.transaction() as conn:
@@ -78,11 +78,14 @@ class Database:
                 run(conn, "DELETE FROM bootstrap_state")
                 state = None
             if not state:
-                if row(conn, "SELECT id FROM users LIMIT 1"):
+                if row(conn, "SELECT id FROM users LIMIT 1") and not force:
                     return None
                 user_id = secrets.token_hex(16)
+                username = "admin"
+                if row(conn, "SELECT id FROM users WHERE username=:name", name=username):
+                    username = "bootstrap-admin-" + secrets.token_hex(3)
                 run(conn, "INSERT INTO users VALUES (:id,:name,:password)",
-                    id=user_id, name="admin", password=password_hash(password))
+                    id=user_id, name=username, password=password_hash(password))
                 run(conn, "INSERT INTO bootstrap_state VALUES (:user,:created)",
                     user=user_id, created=int(time.time()))
             else:

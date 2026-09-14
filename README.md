@@ -31,6 +31,12 @@ uv run pytest
    `0.0.0.0` 并直接开放测试端口；该模式不作为生产发布配置。
 6. 检查 `/health`、`/ready` 及经过授权的上传/读取；`/ready` 探测数据库 schema、staging 读写和对象存储测试前缀。
 
+如需让保留旧数据的升级实例执行一次首次设置，可运行下列命令。它只新增临时管理员，不删除旧账户、Vault 或对象；命令输出的随机密码在固定前也会随服务重启而失效。
+
+```powershell
+docker compose run --rm sync /service/.venv/bin/python -m sync_server bootstrap-user
+```
+
 `initialize` 命令已通过真实 PostgreSQL/MinIO 的空实例与重复运行验证，并由 Compose 的一次性服务调用。MinIO 同步账号仍须由管理员创建并限制到 `opennexus` Bucket，`.env` 中的 root 与同步凭据必须不同。
 
 2026-09-08 已在独立 Docker 项目完成真实 PostgreSQL/MinIO 双 worker 测试部署，修正基础镜像中的 `sync` 系统用户名冲突。测试专用 HTTP 地址、故障检查、完整验收缺口与运维入口见[验收报告](../docs/development/OpenNexus验收报告-2026-09-08.md)。S-07 已在原生 PostgreSQL 17.11/MinIO 实例完成 1 GiB/10,000 文件的删除源实例与空实例恢复；当前机器没有 Docker CLI，因此修改后的 Compose 编排仍需在发布环境复演，生产 TLS 也仍是独立发布门。

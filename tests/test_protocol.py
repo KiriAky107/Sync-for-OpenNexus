@@ -25,6 +25,18 @@ def env(tmp_path):
     db.engine.dispose()
 
 
+def test_upgrade_can_add_bootstrap_without_removing_existing_accounts(tmp_path):
+    db = Database("sqlite:///" + str(tmp_path / "upgrade.db"))
+    db.migrate()
+    db.add_user("existing", "existing-account-password")
+    assert db.prepare_bootstrap_user() is None
+    bootstrap = db.prepare_bootstrap_user(force=True)
+    assert bootstrap["username"] == "admin"
+    with db.transaction() as conn:
+        assert conn.exec_driver_sql("SELECT COUNT(*) FROM users").scalar() == 2
+    db.engine.dispose()
+
+
 def session(client, user="alice"):
     response = client.post("/sync/v1/auth/sessions", json={"username": user, "password": "controlled-fixture-password", "device_name": "测试设备"})
     assert response.status_code == 200, response.text
