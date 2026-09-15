@@ -6,4 +6,5 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?required}
     ports: !override
       - "0.0.0.0:${SYNC_PORT:-18080}:8080"
+      - "[::]:${SYNC_PORT:-18080}:8080"
     restart: unless-stopped
