@@ -1,0 +1,9 @@
+# 仅用于隔离的明文 HTTP 验收环境；生产部署不要加载此覆盖文件。
+services:
+  sync:
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?required}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?required}
+    ports: !override
+      - "0.0.0.0:${SYNC_PORT:-18080}:8080"
+    restart: unless-stopped
