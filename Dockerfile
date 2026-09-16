@@ -7,7 +7,7 @@ COPY console ./
 RUN pnpm build
 
 FROM python:3.12-slim
-ARG OPENNEXUS_SYNC_VERSION=0.3.2-alpha.1
+ARG OPENNEXUS_SYNC_VERSION=0.4.0-alpha.1
 LABEL org.opencontainers.image.title="OpenNexus Server Sync" \
       org.opencontainers.image.version="${OPENNEXUS_SYNC_VERSION}" \
       org.opencontainers.image.source="https://gitea.kronecker.cc/Kronecker/NotesAgentic"

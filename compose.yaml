@@ -23,8 +23,8 @@ services:
     build:
       context: .
       args:
-        OPENNEXUS_SYNC_VERSION: ${OPENNEXUS_SYNC_TAG:-0.3.2-alpha.1}
-    image: opennexus-sync:${OPENNEXUS_SYNC_TAG:-0.3.2-alpha.1}
+        OPENNEXUS_SYNC_VERSION: ${OPENNEXUS_SYNC_TAG:-0.4.0-alpha.1}
+    image: opennexus-sync:${OPENNEXUS_SYNC_TAG:-0.4.0-alpha.1}
     command: ["/service/.venv/bin/python", "-m", "sync_server", "initialize"]
     environment:
       SYNC_DATABASE_URL: ${SYNC_DATABASE_URL:?required}
@@ -43,8 +43,8 @@ services:
     build:
       context: .
       args:
-        OPENNEXUS_SYNC_VERSION: ${OPENNEXUS_SYNC_TAG:-0.3.2-alpha.1}
-    image: opennexus-sync:${OPENNEXUS_SYNC_TAG:-0.3.2-alpha.1}
+        OPENNEXUS_SYNC_VERSION: ${OPENNEXUS_SYNC_TAG:-0.4.0-alpha.1}
+    image: opennexus-sync:${OPENNEXUS_SYNC_TAG:-0.4.0-alpha.1}
     environment:
       SYNC_DATABASE_URL: ${SYNC_DATABASE_URL:?required}
       SYNC_S3_ENDPOINT: http://objects:9000
