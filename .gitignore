@@ -1,0 +1,15 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.db
+*.sqlite*
+.env
+*.token
+*.key
+console/node_modules/
+console/dist/
+.build/
+backups/
+objects/
+staging/
