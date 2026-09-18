@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/KiriAky107/Sync-for-OpenNexus/security
+    about: Report unpatched vulnerabilities privately.
+  - name: OpenNexus desktop issues
+    url: https://github.com/KiriAky107/OpenNexus/issues
+    about: Use the main repository for desktop and AI Core behavior.

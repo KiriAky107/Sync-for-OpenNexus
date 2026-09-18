@@ -1,0 +1,30 @@
+name: Feature request / 功能建议
+description: Propose a scoped protocol, deployment, console, or operations improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and users affected
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Protocol, migration, security, backup, and compatibility impact
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing requests and confirmed this belongs in the Sync repository.
+          required: true

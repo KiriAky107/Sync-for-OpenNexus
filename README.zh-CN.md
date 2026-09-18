@@ -1,96 +1,203 @@
-# OpenNexus Server Sync
+# Sync for OpenNexus
 
 **简体中文** | [English](README.md)
 
-当前发布版本为 **0.5.2-alpha1**。服务独立于 AI Core，生产入口仅支持 PostgreSQL 和 S3 兼容对象存储。独立发布包包含服务源码、锁文件、Vue 3 + TypeScript 管理控制台静态文件、Dockerfile 与 Compose 模板，不包含任何 Vault、账户数据库、对象存储数据或部署密钥。
+[![版本](https://img.shields.io/badge/version-0.5.2--alpha1-5865f2)](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.5.2-alpha1)
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab)
+![API](https://img.shields.io/badge/API-FastAPI-05998b)
+![控制台](https://img.shields.io/badge/console-Vue%203-42b883)
+[![许可证](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
-服务根路径 `/` 与 `/console/` 提供同源的 Vue 3 + TypeScript Sync Console，可查看服务健康与依赖就绪状态，并使用普通 Sync 账户管理自己的 Vault 和设备。页面只调用公开的 Sync v1 API；密码在请求发出前从输入框清除，访问和刷新令牌只保留在页面内存，刷新或关闭页面即丢弃。控制台源码位于 `console/`，生产静态文件由 Docker 多阶段构建生成。
+Sync for OpenNexus 是 OpenNexus 的可选自托管同步服务，管理账户、设备、不可变内容对象、有序文件修订、断点续传、备份及空实例恢复。它不运行桌面 AI Core，也不会直接读取用户本地 Vault。
 
-```powershell
-cd console
-pnpm install --frozen-lockfile
-pnpm build
+> **Alpha 状态：**生产部署必须使用 TLS 和访问控制。PostgreSQL 与 S3 兼容对象存储是生产路径；SQLite 和明文 HTTP 仅用于隔离测试。
+
+## 能力与边界
+
+- Access/Refresh 会话和设备撤销。
+- 用户级 Vault 隔离、配额和有序修订流。
+- 校验偏移、长度、SHA-256 和幂等完成回执的分块上传。
+- PostgreSQL 元数据与不可变对象存储分离。
+- 供桌面 Outbox/Inbox 客户端使用的基础修订与冲突检测。
+- Repeatable-read 备份和只面向空部署的验证恢复。
+- 同源 Vue 控制台，用于健康状态、账户、Vault 和设备管理。
+
+服务不执行模型、不索引 Markdown、不安装扩展，也不接收 OpenNexus 模型提供商凭据，更不会复用 Community Token。
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    Desktop[OpenNexus 桌面客户端] -->|HTTPS Sync v1| Proxy[TLS 反向代理]
+    Console[Vue 3 Sync Console] -->|同源 API| Proxy
+    Proxy --> API[FastAPI Sync 服务]
+    API --> PG[(PostgreSQL 17 元数据)]
+    API --> Stage[(受限暂存卷)]
+    API --> S3[(S3 兼容对象存储)]
+    Init[一次性初始化任务] --> PG
+    Init --> S3
+    Backup[备份与恢复命令] --> PG
+    Backup --> S3
 ```
 
-## 隔离测试
+`compose.yaml` 默认只绑定 `127.0.0.1:8080`，使用幂等初始化任务、只读服务文件系统、删除 Linux Capabilities，并让长期运行服务使用 Bucket 级凭据而非 MinIO Root 凭据。
+
+## 同步协议流程
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as 桌面客户端
+    participant API as Sync v1 API
+    participant DB as PostgreSQL
+    participant Obj as 对象存储
+
+    Client->>API: 握手并认证设备
+    API->>DB: 创建访问与刷新会话
+    Client->>API: 以哈希和长度创建断点上传
+    API->>DB: 预留上传与配额
+    loop 有界分块
+        Client->>API: 在期望偏移上传数据块
+        API->>DB: 保存新偏移
+    end
+    Client->>API: 完成上传
+    API->>Obj: 写入不可变对象
+    API->>DB: 写入对象记录和完成回执
+    Client->>API: 携带基础修订和操作 ID 提交修订
+    API->>DB: 校验所有权、路径、序列和幂等性
+    alt 基础修订有效
+        API->>DB: 追加修订并更新文件 Head
+        API-->>Client: 返回新有序序列
+    else 冲突
+        API-->>Client: 返回当前修订冲突
+    end
+    Client->>API: 从游标之后拉取变化
+    API-->>Client: 返回有序修订与对象哈希
+    Client->>API: 下载所需不可变对象
+```
+
+## 数据库关系
+
+```mermaid
+erDiagram
+    USERS ||--o{ DEVICES : 拥有
+    DEVICES ||--o{ SESSIONS : 认证
+    USERS ||--o{ VAULTS : 拥有
+    VAULTS ||--o{ UPLOADS : 暂存
+    DEVICES ||--o{ UPLOADS : 创建
+    VAULTS ||--o{ OBJECTS : 保存
+    VAULTS ||--o{ REVISIONS : 追加
+    DEVICES ||--o{ REVISIONS : 提交
+    VAULTS ||--o{ FILES : 跟踪
+    UPLOADS ||--o| UPLOAD_RECEIPTS : 完成
+
+    USERS { string id PK string username UK string password_hash }
+    DEVICES { string id PK string user_id FK string name bool revoked }
+    SESSIONS { string token PK string refresh UK string device_id FK int expires int refresh_expires }
+    VAULTS { string id PK string user_id FK string name int sequence int quota int used }
+    UPLOADS { string id PK string vault_id FK string device_id FK string hash int size int offset_bytes int expires }
+    OBJECTS { string vault_id PK, FK string hash PK int size int created }
+    REVISIONS { string vault_id PK, FK int sequence PK string file_id int base_revision string path string operation string hash string device_id FK string operation_id UK }
+    FILES { string vault_id PK, FK string file_id PK int sequence string path_key bool deleted }
+    UPLOAD_RECEIPTS { string id PK string vault_id FK string device_id FK string hash int completed }
+```
+
+Schema 还包含 `schema_version`、`login_limits` 和 `bootstrap_state`。对象内容位于 S3，PostgreSQL 是所有权、修订顺序、配额、回执和对象目录的权威来源。
+
+## 仓库结构
+
+| 路径 | 用途 |
+| --- | --- |
+| `sync_server/` | API、协议、数据库、存储、就绪检查、备份与恢复 |
+| `console/` | Vue 3 + TypeScript 管理控制台 |
+| `tests/` | 协议、生产存储、就绪状态、控制台和基准测试 |
+| `tools/` | 有界上传与传输探针 |
+| `compose.yaml` | PostgreSQL、MinIO、初始化任务和加固服务 |
+| `compose.test.yaml` | 显式隔离测试覆盖配置 |
+
+## 快速部署
+
+```powershell
+Copy-Item .env.example .env
+# 为所有空白密钥生成彼此独立的值并编辑 .env
+docker compose up -d --build
+docker compose ps
+docker compose logs sync
+```
+
+全新数据库会生成临时 `admin`，并向 Sync 容器日志写入 `SYNC_BOOTSTRAP_CREDENTIALS`。首次登录后必须立即修改用户名和密码；在固定凭据前，每次重启都会轮换临时密码并撤销旧会话。
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `POSTGRES_PASSWORD` | PostgreSQL 容器密码 |
+| `SYNC_DATABASE_URL` | 密码经过 URL 编码的 PostgreSQL SQLAlchemy URL |
+| `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD` | 仅供初始化任务管理对象存储 |
+| `SYNC_ACCESS_KEY_ID`、`SYNC_SECRET_ACCESS_KEY` | Bucket 级运行身份 |
+| `SYNC_S3_BUCKET` | 已有或初始化的对象 Bucket |
+| `SYNC_BIND_ADDRESS`、`SYNC_PORT` | 宿主监听地址与端口 |
+
+不得复用 MinIO Root 凭据作为运行时凭据，升级时必须保持 Bucket 名称一致。
+
+## 健康与运维
+
+- `/health` 报告进程健康。
+- `/ready` 检查数据库 Schema、暂存目录写入及对象存储探针。
+- `/` 与 `/console/` 提供同源管理控制台。
+- 生产流量必须在反向代理终止 TLS；可参考 `Caddyfile.example`。
+- `compose.test.yaml` 直接暴露端口的方式仅用于已授权隔离演示。
+
+## 备份与空实例恢复
+
+```powershell
+python -m sync_server backup --directory D:/OpenNexus-backups/latest --io-workers 8
+python -m sync_server restore --directory D:/OpenNexus-backups/latest --io-workers 8
+```
+
+```mermaid
+flowchart LR
+    A[启动 repeatable-read 事务] --> B[导出 Schema v1 数据]
+    B --> C[生成不可变对象清单]
+    C --> D{存在未完成上传或缺失对象？}
+    D -- 是 --> X[失败且不发布残缺备份]
+    D -- 否 --> E[流式下载并校验长度与 SHA-256]
+    E --> F[写入完成的备份元数据]
+    F --> G{目标数据库与 Bucket 为空？}
+    G -- 否 --> Y[拒绝恢复]
+    G -- 是 --> H[校验备份完整性与时间策略]
+    H --> I[上传并回读全部对象]
+    I --> J[在单个 PostgreSQL 事务导入数据]
+    J --> K[启动服务并检查 ready]
+```
+
+备份包含认证和会话哈希，必须使用受限 ACL、加密存储、保留规则和异机副本保护，并定期在独立空实例演练恢复。
+
+## 开发与测试
 
 ```powershell
 uv sync --frozen
 uv run pytest
+
+cd console
+corepack enable
+corepack prepare pnpm@10.28.0 --activate
+pnpm install --frozen-lockfile
+pnpm type-check
+pnpm build
 ```
 
-测试自动创建临时 SQLite、对象和暂存目录，不读用户 Vault。
+测试只能使用临时数据库、对象目录和暂存目录，不得读取 OpenNexus 用户 Vault 或真实部署凭据。
 
-## 自托管准备
+## 安全与社区
 
-从发布页下载对应版本的 Server Sync 压缩包并核对 SHA-256 后，将压缩包解压到独立目录。升级现有实例时先备份数据库、对象存储和 `.env`，再使用新版镜像替换 Sync 服务；不要用发行包覆盖持久化卷。
+- 不得提交 `.env`、Token、密码、数据库、对象内容、备份或用户 Vault。
+- 限制数据库和对象存储网络，启用监控，并及时撤销遗失设备。
+- 路径规范化、操作 ID、基础修订、配额、内容哈希和账户边界均属于安全控制。
+- 漏洞按照 [SECURITY.md](SECURITY.md) 私下报告。
+- 贡献遵循[贡献指南](CONTRIBUTING.md)和[社区行为准则](CODE_OF_CONDUCT.md)。
+- 使用仓库 Issue 表单和 PR 模板，并对基础设施与账户信息脱敏。
 
-仓库提供以下 Docker 文件：
-
-- `Dockerfile`：构建 Vue 控制台和只读运行镜像。
-- `compose.yaml`：启动 PostgreSQL、MinIO、一次性初始化任务和 Sync 服务，默认只监听 `127.0.0.1:8080`。
-- `compose.test.yaml`：仅供隔离验收使用，将 Sync 通过 IPv4 与 IPv6 暴露到 `18080`，并使用 MinIO 管理凭据。
-- `.dockerignore`：排除密钥、数据库、Vault、测试缓存和本机依赖。
-
-```powershell
-Copy-Item .env.example .env
-# 编辑 .env 后启动生产形态
-docker compose up -d --build
-
-# 或在隔离测试机直接开放 18080；需要 Docker Compose 2.24.4+
-docker compose -f compose.yaml -f compose.test.yaml up -d --build
-```
-
-1. 将 `.env.example` 复制为 `.env`，生成独立数据库、MinIO 管理和同步访问凭据。数据库 URL 使用 `postgresql+psycopg://…`，其中密码须 URL 编码。升级现有实例时，将 `SYNC_S3_BUCKET` 保持为原实例的 Bucket 名称。
-2. 执行 `docker compose up -d`。一次性 `initialize` 服务等待依赖后幂等创建 schema 与 `opennexus` Bucket；重复运行只检查并补齐缺失资源，不覆盖已有行或对象。长期运行的 `sync` 服务继续使用只限该 Bucket 的同步账号，不使用 MinIO root 身份。
-3. 全新数据库会生成账户 `admin` 和本次启动专用的随机密码。使用 `docker compose logs sync` 查找 `SYNC_BOOTSTRAP_CREDENTIALS`；随机密码不会写入镜像、环境变量或数据库明文。只要账户尚未固定，服务每次重启都会更换该密码并撤销旧会话。
-4. 使用随机密码首次登录控制台后，必须立即修改账户名和密码。保存成功后凭据写入数据库，此后服务重启不再更换。已有正式账户的升级实例不会额外创建默认账户。仍可使用 `create-user` 运维命令增加独立账户，密码通过终端交互输入。
-5. 使用 Caddy 示例配置 TLS。默认通过 `SYNC_BIND_ADDRESS=127.0.0.1` 与
-   `SYNC_PORT=8080` 只监听本机。仅限已授权的隔离测试阶段将监听地址改为
-   `0.0.0.0` 并直接开放测试端口；该模式不作为生产发布配置。
-6. 检查 `/health`、`/ready` 及经过授权的上传/读取；`/ready` 探测数据库 schema、staging 读写和对象存储测试前缀。
-
-如需让保留旧数据的升级实例执行一次首次设置，可运行下列命令。它只新增临时管理员，不删除旧账户、Vault 或对象；命令输出的随机密码在固定前也会随服务重启而失效。
-
-```powershell
-docker compose run --rm sync /service/.venv/bin/python -m sync_server bootstrap-user
-```
-
-`initialize` 命令已通过真实 PostgreSQL/MinIO 的空实例与重复运行验证，并由 Compose 的一次性服务调用。MinIO 同步账号仍须由管理员创建并限制到 `opennexus` Bucket，`.env` 中的 root 与同步凭据必须不同。
-
-Sync Server 已在真实 PostgreSQL/MinIO 环境验证初始化、重复启动、固定凭据、健康检查和已有数据升级。测试阶段可以直接开放 HTTP 端口；生产上线仍需配置 TLS、访问控制、监控与异机备份。
-
-## 备份与空实例恢复
-
-`backup` 在 PostgreSQL 的同一只读 repeatable-read 事务中导出 schema v1 的全部表和对象清单，再流式下载清单中的不可变对象并核对长度/SHA-256。存在未完成上传或缺失历史对象时失败；目标目录必须不存在。备份目录含认证哈希和会话哈希，必须使用受限 ACL、加密磁盘及异机副本保护。
-
-```powershell
-python -m sync_server backup --directory D:/OpenNexus-backups/2026-09-09 --io-workers 8
-```
-
-`restore` 默认拒绝超过 24 小时的备份，只允许空 PostgreSQL 数据库和空/不存在 Bucket。命令先校验完整备份，再上传并回读核对全部对象，最后在单个 PostgreSQL 事务中创建 schema、导入并复核对象目录；数据库不会引用只恢复一部分的对象。恢复演练应使用新实例，成功后再启动服务并检查 `/ready`。
-
-```powershell
-python -m sync_server restore --directory D:/OpenNexus-backups/2026-09-09 --io-workers 8
-```
-
-生产定时任务至少每日生成一次新目录并检查命令退出码、`created_utc`、对象数与总字节；保留策略和异机复制由部署维护者配置。升级前执行新备份并完成抽样恢复。Schema v1 拒绝未知数据库版本，不自动降级；当前历史永久保留，容量管理不能手动删除被历史引用的对象。
-
-
-## 四并发大附件传输探针
-
-仅对可保留测试数据的隔离实例运行。准备两个已有测试账号的受限权限 JSON 文件，内容为两个含 username/password 字段的对象数组；不要将该文件提交到仓库。工具会创建四个测试 Vault，保留数据供进一步核对，不修改已有 Vault。
-
-```powershell
-uv run python tools/upload_benchmark.py --url http://localhost:8080 --allow-test-http --credentials C:/private/sync-test-accounts.json --output ../.build/upload-report.json
-```
-
-默认两账号各两个 Vault，以共同启动屏障进行四个 100 MiB 上传，逐块确认 offset，重复 complete 和 revision 检查持久回执，再流式下载核对大小/SHA256并检查跨账号拒绝。无自动重试掩盖失败，报告不含凭据、令牌或响应正文。HTTP 必须显式指定测试选项；HTTPS 使用默认验证且不跟随重定向。单次运行上限 30 分钟。
-
-报告 result 表示本次传输检查结果，acceptance 始终 NOT_ASSESSED：工具尚未接入服务进程/容器 RSS 采集器，也未执行完整 S-09 的 30 分钟提交负载、10000 笔记和规定网络条件。真实 TCP 回环回归见 tests/test_upload_benchmark.py，其中 SQLite/DiskObjects 与客户端位于同一 Python 进程，不能作为生产性能指标。
-
-桌面主程序位于 [OpenNexus](https://github.com/KiriAky107/OpenNexus)。
+相关仓库：[OpenNexus](https://github.com/KiriAky107/OpenNexus) 与 [Community for OpenNexus](https://github.com/KiriAky107/Community-for-OpenNexus)。
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE)。第三方组件继续适用各自的许可证与声明。
+本项目采用 [MIT License](LICENSE)，第三方组件继续适用各自的许可证与声明。

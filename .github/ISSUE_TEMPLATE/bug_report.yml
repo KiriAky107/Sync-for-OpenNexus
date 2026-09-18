@@ -1,0 +1,55 @@
+name: Bug report / 缺陷报告
+description: Report a reproducible Sync Server defect
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private endpoints, account data, backups, objects, or unpatched vulnerability details.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options: [Protocol API, Authentication and devices, Uploads and objects, Revisions and conflicts, Backup and restore, Docker deployment, Management console, Tests or tools]
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Sanitized environment
+      description: OS, deployment method, PostgreSQL/S3 implementations and versions, reverse proxy, and client version. Remove secrets and hostnames.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Minimum reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized logs
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing reports and removed all sensitive data.
+          required: true
+        - label: This is not an unpatched security vulnerability.
+          required: true
