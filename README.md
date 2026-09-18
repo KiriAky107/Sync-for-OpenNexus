@@ -1,6 +1,6 @@
 # OpenNexus Server Sync
 
-当前发布版本为 **0.5.0**。协议及限制见 [Sync v1](../docs/contracts/Sync-v1契约.md)。服务独立于 AI Core，生产入口仅支持 PostgreSQL 和 S3 兼容对象存储。独立发布包包含服务源码、锁文件、Vue 3 + TypeScript 管理控制台静态文件、Dockerfile 与 Compose 模板，不包含任何 Vault、账户数据库、对象存储数据或部署密钥。
+当前发布版本为 **0.5.2-alpha1**。服务独立于 AI Core，生产入口仅支持 PostgreSQL 和 S3 兼容对象存储。独立发布包包含服务源码、锁文件、Vue 3 + TypeScript 管理控制台静态文件、Dockerfile 与 Compose 模板，不包含任何 Vault、账户数据库、对象存储数据或部署密钥。
 
 服务根路径 `/` 与 `/console/` 提供同源的 Vue 3 + TypeScript Sync Console，可查看服务健康与依赖就绪状态，并使用普通 Sync 账户管理自己的 Vault 和设备。页面只调用公开的 Sync v1 API；密码在请求发出前从输入框清除，访问和刷新令牌只保留在页面内存，刷新或关闭页面即丢弃。控制台源码位于 `console/`，生产静态文件由 Docker 多阶段构建生成。
 
@@ -22,7 +22,7 @@ uv run pytest
 
 ## 自托管准备
 
-从发布页下载 `OpenNexus-Server-Sync-0.5.0.zip` 并核对 `SHA256.json` 后，将压缩包解压到独立目录。升级现有实例时先备份数据库、对象存储和 `.env`，再使用新版镜像替换 Sync 服务；不要用发行包覆盖持久化卷。
+从发布页下载对应版本的 Server Sync 压缩包并核对 SHA-256 后，将压缩包解压到独立目录。升级现有实例时先备份数据库、对象存储和 `.env`，再使用新版镜像替换 Sync 服务；不要用发行包覆盖持久化卷。
 
 仓库提供以下 Docker 文件：
 
@@ -57,7 +57,7 @@ docker compose run --rm sync /service/.venv/bin/python -m sync_server bootstrap-
 
 `initialize` 命令已通过真实 PostgreSQL/MinIO 的空实例与重复运行验证，并由 Compose 的一次性服务调用。MinIO 同步账号仍须由管理员创建并限制到 `opennexus` Bucket，`.env` 中的 root 与同步凭据必须不同。
 
-0.5.0 使用真实 PostgreSQL/MinIO 环境验证初始化、重复启动、固定凭据、健康检查和已有数据升级。测试专用 HTTP 地址、故障检查、完整验收记录与运维入口见[验收报告](../docs/development/OpenNexus验收报告-2026-09-08.md)。S-07 已在原生 PostgreSQL 17.11/MinIO 实例完成 1 GiB/10,000 文件的删除源实例与空实例恢复。测试阶段可以直接开放 HTTP 端口；生产上线仍需配置 TLS、访问控制、监控与异机备份。
+Sync Server 已在真实 PostgreSQL/MinIO 环境验证初始化、重复启动、固定凭据、健康检查和已有数据升级。测试阶段可以直接开放 HTTP 端口；生产上线仍需配置 TLS、访问控制、监控与异机备份。
 
 ## 备份与空实例恢复
 
