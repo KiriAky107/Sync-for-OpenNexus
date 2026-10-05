@@ -161,6 +161,10 @@ erDiagram
 
 The schema also contains `schema_version`, `login_limits`, and `bootstrap_state`. Object bytes live in S3; PostgreSQL remains the authority for ownership, revision ordering, quota accounting, receipts, and object inventory.
 
+### Opaque file contents and experiment-file compatibility
+
+Sync API v1 treats uploaded object contents as opaque bytes. It validates canonical relative paths, content hashes, object size and revision ownership; it does not parse or execute files. OpenNexus desktop clients can therefore sync `.py` source, `.json` and `.csv` input data through the existing revision and object protocol without a database migration or a new API version. The desktop controls which local file types enter this protocol. Older clients that do not recognize these extensions leave them untouched and do not run them.
+
 ## Repository layout
 
 | Path | Purpose |

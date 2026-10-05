@@ -90,6 +90,24 @@ def test_two_devices_conflict_retry_move_delete_history(env):
     assert client.get(base + "/objects/" + sha, headers=auth).content == b"controlled note"
 
 
+def test_experiment_source_and_input_files_use_the_existing_opaque_object_protocol(env):
+    client, _, _, _ = env
+    auth, _, base = setup(client)
+    for path, content in [
+        ("experiments/main.py", b"print('hello')\n"),
+        ("experiments/input.json", b'{"value": 1}\n'),
+        ("experiments/input.csv", b"value\n1\n"),
+    ]:
+        sha = upload(client, base, auth, content)
+        response = client.post(
+            base + "/revisions",
+            headers=auth,
+            json=change(sha, path=path, size=len(content)),
+        )
+        assert response.status_code == 200, response.text
+        assert client.get(base + "/objects/" + sha, headers=auth).content == content
+
+
 def test_object_isolation_revocation_refresh_and_expiry(env):
     client, _, _, now = env
     auth, token, base = setup(client)
