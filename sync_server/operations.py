@@ -317,6 +317,26 @@ def _upload_and_verify(objects, source: Path, item: dict[str, Any]) -> str:
     return key
 
 
+def verify_backup(source: Path, *, workers: int = 8, max_age_hours: float = 24) -> dict[str, Any]:
+    """Verify the same database and object bytes required by restore, without writes."""
+    if not math.isfinite(max_age_hours) or max_age_hours <= 0:
+        raise OperationsError("BACKUP_AGE_LIMIT_INVALID")
+    if isinstance(workers, bool) or not isinstance(workers, int) or not 1 <= workers <= 32:
+        raise OperationsError("BACKUP_WORKER_LIMIT_INVALID")
+    source = source.resolve(strict=True)
+    manifest = _load_manifest(source, max_age_hours)
+    _load_database_snapshot(source, manifest)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(lambda item: _verify_backup_file(source, item), manifest["objects"]))
+    return {
+        "status": "BACKUP_VERIFIED",
+        "backup_age_seconds": manifest["age_seconds"],
+        "object_count": manifest["object_count"],
+        "object_bytes": manifest["object_bytes"],
+        "verified_objects": len(manifest["objects"]),
+    }
+
+
 def _database_is_empty(conn) -> bool:
     return (
         conn.execute(

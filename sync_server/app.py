@@ -41,7 +41,11 @@ def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=time.time):
+def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=time.time,
+               operations_path: Path | None = None, operator_user_ids=()):
+    operators = frozenset(operator_user_ids)
+    if any(not isinstance(value, str) or len(value) != 32 or any(char not in '0123456789abcdef' for char in value) for value in operators):
+        raise ValueError("Invalid operator account ID")
     db.migrate()
     staging.mkdir(parents=True, exist_ok=True)
     @asynccontextmanager
@@ -250,6 +254,26 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         with db.transaction() as conn:
             session = identity(conn, authorization)
             return {"items": rows(conn, "SELECT id,name,revoked FROM devices WHERE user_id=:user", user=session["user_id"])}
+
+    @app.get("/sync/v1/operations")
+    def operation_records(response: Response, authorization: str = Header(default=""),
+                          limit: int = 20, before: int | None = None):
+        with db.transaction() as conn:
+            session = identity(conn, authorization)
+            if session["user_id"] not in operators:
+                raise SyncError(403, "OPERATIONS_FORBIDDEN")
+        if not 1 <= limit <= 100 or (before is not None and not 1 <= before <= 2**63 - 1):
+            raise SyncError(422, "INVALID_REQUEST")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        if operations_path is None:
+            return {"schema": 1, "configured": False, "items": [], "next_before": None}
+        from .operation_journal import OperationJournal
+        from .operations import OperationsError
+        try:
+            return {"configured": True, **OperationJournal(operations_path).records(limit=limit, before=before)}
+        except OperationsError:
+            raise SyncError(503, "OPERATIONS_STATUS_UNAVAILABLE") from None
 
     @app.delete("/sync/v1/devices/{device_id}", status_code=204)
     def revoke(device_id: str, authorization: str = Header(default="")):

@@ -12,31 +12,58 @@ from .database import Database
 from .storage import S3Objects
 
 
+def operations_path():
+    return Path(os.environ.get("SYNC_OPERATIONS_PATH", str(Path(os.environ.get("SYNC_STAGING_DIR", ".")) / "operations.sqlite3")))
+
+
 def application():
     url = os.environ["SYNC_DATABASE_URL"]
     if not url.startswith("postgresql+psycopg://"):
         raise RuntimeError("生产入口只支持 PostgreSQL")
     return create_app(Database(url), S3Objects(os.environ["SYNC_S3_ENDPOINT"], os.environ["SYNC_S3_BUCKET"]),
-                      Path(os.environ["SYNC_STAGING_DIR"]))
+                      Path(os.environ["SYNC_STAGING_DIR"]), operations_path=operations_path(),
+                      operator_user_ids=tuple(value.strip() for value in os.environ.get("SYNC_OPERATOR_USER_IDS", "").split(",") if value.strip()))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["serve", "initialize", "migrate", "create-user", "bootstrap-user", "cleanup-uploads", "backup", "restore"],
+        choices=["serve", "initialize", "migrate", "create-user", "bootstrap-user", "cleanup-uploads", "backup", "verify-backup", "restore", "operation-records", "operator-id"],
     )
     parser.add_argument("--workers", type=int, choices=[1, 2], default=2)
     parser.add_argument("--username")
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--io-workers", type=int, choices=range(1, 33), default=8)
     parser.add_argument("--max-age-hours", type=float, default=24)
+    parser.add_argument("--limit", type=int, choices=range(1, 101), default=20)
+    parser.add_argument("--before", type=int)
     args = parser.parse_args()
+    from .operation_journal import OperationJournal
+    journal = OperationJournal(operations_path())
+    if args.command == "operation-records":
+        print(json.dumps(journal.records(limit=args.limit, before=args.before)))
+        return
+    if args.command == "verify-backup":
+        if args.directory is None:
+            raise SystemExit("verify-backup needs --directory")
+        from .operations import verify_backup
+        print(json.dumps(journal.run("verify", lambda: verify_backup(args.directory, workers=args.io_workers, max_age_hours=args.max_age_hours))))
+        return
     url = os.environ["SYNC_DATABASE_URL"]
     if not url.startswith("postgresql+psycopg://"):
         raise SystemExit("生产入口只支持 PostgreSQL")
     db = Database(url)
-    if args.command == "initialize":
+    if args.command == "operator-id":
+        if not args.username:
+            raise SystemExit("operator-id needs --username")
+        from .database import row
+        with db.transaction() as conn:
+            account = row(conn, "SELECT id FROM users WHERE username=:name", name=args.username)
+            if not account:
+                raise SystemExit("ACCOUNT_NOT_FOUND")
+            print(json.dumps({"user_id": account["id"]}))
+    elif args.command == "initialize":
         objects = S3Objects(os.environ["SYNC_S3_ENDPOINT"], os.environ["SYNC_S3_BUCKET"])
         deadline = time.monotonic() + 60
         while True:
@@ -57,7 +84,7 @@ def main():
         objects = S3Objects(os.environ["SYNC_S3_ENDPOINT"], os.environ["SYNC_S3_BUCKET"])
         print(
             json.dumps(
-                create_backup(db, objects, args.directory, workers=args.io_workers)
+                journal.run("backup", lambda: create_backup(db, objects, args.directory, workers=args.io_workers))
             )
         )
     elif args.command == "restore":
@@ -68,13 +95,13 @@ def main():
         objects = S3Objects(os.environ["SYNC_S3_ENDPOINT"], os.environ["SYNC_S3_BUCKET"])
         print(
             json.dumps(
-                restore_backup(
+                journal.run("restore", lambda: restore_backup(
                     db,
                     objects,
                     args.directory,
                     workers=args.io_workers,
                     max_age_hours=args.max_age_hours,
-                )
+                ))
             )
         )
     elif args.command == "create-user":
