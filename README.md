@@ -215,8 +215,14 @@ Never reuse MinIO root credentials as runtime credentials. Keep the bucket name 
 
 ```powershell
 python -m sync_server backup --directory D:/OpenNexus-backups/latest --io-workers 8
+python -m sync_server verify-backup --directory D:/OpenNexus-backups/latest --io-workers 8
 python -m sync_server restore --directory D:/OpenNexus-backups/latest --io-workers 8
+python -m sync_server operation-records --limit 20
 ```
+
+`verify-backup` checks the database snapshot, every object, and the same age policy used by restore without connecting to PostgreSQL or S3. `--max-age-hours` defaults to 24. Backup, verification, and restore save an operation intent before work and a durable result afterward in `SYNC_OPERATIONS_PATH`. Container deployments persist this journal in the `operations` volume; standalone operators should set a durable journal path. Records expose only operation IDs, times, fixed error codes, and counts. An unfinished record means a completion receipt was not saved; check the original process and target data before retrying.
+
+To permit an account to view these records in the console, run `python -m sync_server operator-id --username <fixed-account-name>`, put its stable `user_id` in the comma-separated `SYNC_OPERATOR_USER_IDS` deployment setting, and restart the service. Account name changes preserve access; device revocation and session expiry still apply. Access defaults to disabled. The console provides paged, read-only records and dependency failure feedback. `operation-records --before <next_before>` reads older entries from the CLI. Recovery continues to require an empty database and object bucket.
 
 ```mermaid
 flowchart LR

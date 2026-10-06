@@ -156,8 +156,14 @@ docker compose logs sync
 
 ```powershell
 python -m sync_server backup --directory D:/OpenNexus-backups/latest --io-workers 8
+python -m sync_server verify-backup --directory D:/OpenNexus-backups/latest --io-workers 8
 python -m sync_server restore --directory D:/OpenNexus-backups/latest --io-workers 8
+python -m sync_server operation-records --limit 20
 ```
+
+`verify-backup` 校验数据库快照、每个对象及恢复使用的时间策略，无需连接 PostgreSQL 或 S3。`--max-age-hours` 默认 24 小时。备份、校验和恢复会先保存操作意图，再持久保存结果；记录路径由 `SYNC_OPERATIONS_PATH` 指定。容器部署使用独立 `operations` 卷，独立运行时应设置持久路径。记录只包含操作 ID、时间、固定错误码和计数。未完成记录表示没有保存完成回执，重试前应核对原进程及目标数据。
+
+使用 `python -m sync_server operator-id --username <已固定账户名>` 获取账户的稳定 `user_id`，将获准账户 ID 填入部署配置 `SYNC_OPERATOR_USER_IDS`，多个 ID 用逗号分隔，再重启服务，即可在控制台查看分页运维记录。账户改名后权限保持，设备撤销和会话过期仍会阻止访问。默认不开放记录查看权限。控制台提供只读记录和依赖故障提示；CLI 可用 `operation-records --before <next_before>` 查看更早记录。恢复仍要求数据库和对象桶为空。
 
 ```mermaid
 flowchart LR

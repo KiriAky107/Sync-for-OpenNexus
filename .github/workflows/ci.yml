@@ -72,6 +72,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: console/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - run: pnpm test
       - run: pnpm build
       - uses: actions/upload-artifact@v7
         with:

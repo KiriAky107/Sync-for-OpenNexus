@@ -52,11 +52,14 @@ services:
       AWS_ACCESS_KEY_ID: ${SYNC_ACCESS_KEY_ID:?required}
       AWS_SECRET_ACCESS_KEY: ${SYNC_SECRET_ACCESS_KEY:?required}
       AWS_DEFAULT_REGION: us-east-1
+      SYNC_OPERATIONS_PATH: /operations/operations.sqlite3
+      SYNC_OPERATOR_USER_IDS: ${SYNC_OPERATOR_USER_IDS:-}
     depends_on:
       initialize:
         condition: service_completed_successfully
     volumes:
       - staging:/staging
+      - operations:/operations
     ports:
       - "${SYNC_BIND_ADDRESS:-127.0.0.1}:${SYNC_PORT:-8080}:8080"
     read_only: true
@@ -75,3 +78,4 @@ volumes:
   postgres:
   objects:
   staging:
+  operations:
