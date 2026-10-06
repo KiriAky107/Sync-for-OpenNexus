@@ -1,7 +1,7 @@
 """The production probe must refuse remote or preexisting resources before IO."""
 import pytest
 
-from tools.operations_probe import ProbeFailure, configuration, probe
+from tools.operations_probe import ProbeFailure, configuration, probe, served_protocol
 
 
 def environment():
@@ -38,3 +38,14 @@ def test_existing_work_directory_is_never_reused_or_removed(tmp_path, monkeypatc
         probe(work)
     assert original.read_bytes() == b'preserve-original'
     assert list(work.iterdir()) == [original]
+
+
+def test_existing_serve_staging_is_preserved_before_any_process_is_started(tmp_path):
+    staging = tmp_path/'served-staging'
+    staging.mkdir()
+    original = staging/'original.bin'
+    original.write_bytes(b'preserve-served-staging')
+    with pytest.raises(FileExistsError):
+        served_protocol(tmp_path, tmp_path, tmp_path/'journal.sqlite3', None, '', '', '', {}, [])
+    assert list(staging.iterdir()) == [original]
+    assert original.read_bytes() == b'preserve-served-staging'

@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
 import subprocess
+import socket
 import sys
 import time
 from urllib.parse import urlsplit
@@ -66,6 +68,61 @@ def cli(repo, work, journal, url, endpoint, bucket, command, *args, expected=Non
         # Captured CLI stderr may contain connection details. Never emit it.
         raise ProbeFailure('CLI_OPERATION_FAILED')
     return json.loads(response.stdout)
+
+
+def served_protocol(repo, work, journal, url, endpoint, bucket, base, auth, expected_ids):
+    """Run only this probe's production entrypoint and restored database/bucket."""
+    staging = work/'served-staging'
+    staging.mkdir(exist_ok=False)
+    env = os.environ.copy()
+    env.pop('PYTHONPATH', None)
+    env.update(SYNC_DATABASE_URL=url.render_as_string(hide_password=False), SYNC_S3_ENDPOINT=endpoint,
+               SYNC_S3_BUCKET=bucket, SYNC_STAGING_DIR=str(staging), SYNC_OPERATIONS_PATH=str(journal), SYNC_HOST='127.0.0.1')
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    env['SYNC_PORT'] = str(port)
+    child = subprocess.Popen([sys.executable, '-m', 'sync_server', 'serve', '--workers', '1'], cwd=repo, env=env,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    def request(path, headers=None):
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+        try:
+            connection.request('GET', path, headers=headers or {})
+            response = connection.getresponse()
+            value = json.loads(response.read(1024*1024))
+            return response.status, value
+        finally:
+            connection.close()
+    try:
+        until = time.monotonic()+30
+        while True:
+            if child.poll() is not None:
+                raise ProbeFailure('OWNED_PRODUCTION_SERVER_EXITED')
+            try:
+                status, value = request('/ready')
+                if status == 200 and value.get('schema') == 1:
+                    break
+            except OSError:
+                pass
+            if time.monotonic() >= until:
+                raise ProbeFailure('OWNED_PRODUCTION_SERVER_NOT_READY')
+            time.sleep(.2)
+        status, changes = request(base+'/changes', auth)
+        if status != 200 or changes['cursor'] != 3 or [item['file_id'] for item in changes['items']] != expected_ids:
+            raise ProbeFailure('SERVED_RESTORED_IDENTITY_MISMATCH')
+        status, handshake = request('/sync/v1/handshake')
+        if status != 200 or handshake['protocol'] != 1 or handshake['encryption'] != 'transport-only' or handshake['features']['execution'] is not False:
+            raise ProbeFailure('SERVED_PROTOCOL_MISMATCH')
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=10)
+    return {'owned_server_stopped': child.poll() is not None, 'exit_code': child.returncode}
 
 
 def probe(work: Path):
@@ -190,6 +247,10 @@ def probe(work: Path):
             if client.get(base+'/changes', headers={'Authorization': 'Bearer '+other['access_token']}).status_code != 404:
                 raise ProbeFailure('RESTORED_VAULT_AUTHORITY_LOST')
         report['checks'].append('restored_ids_cursors_bytes_revocation_and_vault_isolation')
+
+        stage = 'actual_production_http_entrypoint'
+        report['served_protocol'] = served_protocol(repo, work, journal, restored_url, endpoint, restored_objects.bucket, base, auth, ids)
+        report['checks'].append('actual_production_serve_readiness_handshake_and_restored_identity')
 
         stage = 'empty_target_and_corruption_gates'
         cli(*common, *source_settings, 'restore', '--directory', str(snapshot), expected='RESTORE_DATABASE_NOT_EMPTY')
