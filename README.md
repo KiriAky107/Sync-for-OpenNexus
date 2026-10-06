@@ -163,6 +163,8 @@ The schema also contains `schema_version`, `login_limits`, and `bootstrap_state`
 
 ### Opaque file contents and experiment-file compatibility
 
+The handshake declares `encryption: transport-only`. Deploy behind HTTPS / TLS: object content and file paths remain readable by the service, so transport encryption does not provide end-to-end encryption. The additive `features` declaration identifies the existing SHA-256 object, stable file identity, canonical path and confirmed-offset upload contracts. Sync never executes received files; clients that use the original v1 fields can continue to ignore this declaration.
+
 Sync API v1 treats uploaded object contents as opaque bytes. It validates canonical relative paths, content hashes, object size and revision ownership; it does not parse or execute files. OpenNexus desktop clients can therefore sync `.py` source, `.json` and `.csv` input data under the vault-root `experiments/` directory through the existing revision and object protocol without a database migration or a new API version. The desktop controls which local file types enter this protocol. Older clients that do not recognize these extensions leave them untouched and do not run them.
 
 ## Repository layout

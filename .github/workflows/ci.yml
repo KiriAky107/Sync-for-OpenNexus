@@ -1,0 +1,80 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: sync-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol:
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read the fixed Desktop contract fixture
+        uses: actions/checkout@v7
+        with:
+          repository: KiriAky107/OpenNexus
+          ref: bbea7992f2af4ea3b05b2dd0faa39a419a2629fb
+          path: .contract-desktop
+          persist-credentials: false
+          sparse-checkout: frontend/src-tauri/tests/fixtures/sync-v1-contract.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - run: uv sync --frozen
+      - name: Verify the shared contract and local documentation policy
+        run: |
+          uv run --frozen python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          desktop = Path('.contract-desktop')
+          assert Path('tests/fixtures/sync-v1-contract.json').read_bytes() == (desktop / 'frontend/src-tauri/tests/fixtures/sync-v1-contract.json').read_bytes(), 'Sync and Desktop protocol fixtures differ'
+          private = ('docs/', 'documents/', 'frontend/docs/', '.local-plans/')
+          for repo in (Path('.'), desktop):
+              paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=repo).decode('utf-8').split('\0')
+              assert not any(path.casefold().startswith(private) for path in paths), 'Private documentation must stay local'
+          PY
+      - run: uv run --frozen pytest -q
+
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: corepack prepare pnpm@10.28.0 --activate
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: console/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sync-console-${{ github.sha }}
+          path: console/dist
+          if-no-files-found: error
