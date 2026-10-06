@@ -10,6 +10,8 @@
 
 Sync for OpenNexus 是 OpenNexus 的可选自托管同步服务，管理账户、设备、不可变内容对象、有序文件修订、断点续传、备份及空实例恢复。它不运行桌面 AI Core，也不会直接读取用户本地 Vault。
 
+对象服务通过 `Dockerfile.objects` 从 [MinIO 官方安全修复版本](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z) 构建，固定源码提交并检查归档 SHA-256，不再依赖已无法拉取的公共容器镜像，数据仍保存在既有 `/data` 卷。GitHub CI 使用同一构建文件，验证备份、数据库全部行的逐字恢复、对象哈希、恢复后的设备撤销及非空目标拒绝；上传产物只包含脱敏结果。
+
 > **Alpha 状态：**生产部署必须使用 TLS 和访问控制。PostgreSQL 与 S3 兼容对象存储是生产路径；SQLite 和明文 HTTP 仅用于隔离测试。
 
 ## 能力与边界

@@ -42,6 +42,8 @@ flowchart LR
 
 `compose.yaml` binds the API to `127.0.0.1:8080`, runs a one-shot idempotent initializer, drops Linux capabilities, uses a read-only service filesystem, and gives the long-running service bucket-scoped credentials instead of MinIO root credentials.
 
+The object service is built with `Dockerfile.objects` from the [official MinIO security release](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z). The build fixes the source commit and checks the archive SHA-256, so it does not depend on the withdrawn public container image. The existing `/data` volume remains the storage location. GitHub CI builds the same recipe and verifies backup, byte-for-byte database recovery, object hashes, restored device revocation, and refusal to restore into occupied targets; only a sanitized result is uploaded.
+
 ## Sync protocol flow
 
 ```mermaid

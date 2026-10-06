@@ -3,6 +3,10 @@
 !.env.example
 .git
 .gitea
+docs
+documents
+frontend/docs
+.local-plans
 .venv
 __pycache__
 *.py[cod]
