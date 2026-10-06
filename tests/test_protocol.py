@@ -2,6 +2,8 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import json
+from pathlib import Path
 import uuid
 
 from fastapi.testclient import TestClient
@@ -105,6 +107,21 @@ def test_experiment_source_and_input_files_use_the_existing_opaque_object_protoc
             json=change(sha, path=path, size=len(content)),
         )
         assert response.status_code == 200, response.text
+        assert client.get(base + "/objects/" + sha, headers=auth).content == content
+
+
+def test_shared_desktop_handshake_and_opaque_file_contract(env):
+    client, _, _, _ = env
+    fixture = json.loads((Path(__file__).parent / "fixtures" / "sync-v1-contract.json").read_text(encoding="utf-8"))
+    assert client.get("/sync/v1/handshake?protocol=1").json() == fixture["handshake"]
+    auth, _, base = setup(client)
+    for case in fixture["paths"]:
+        content = case["content"].encode("utf-8")
+        sha = upload(client, base, auth, content)
+        body = change(sha, path=case["path"], size=len(content))
+        response = client.post(base + "/revisions", headers=auth, json=body)
+        assert response.status_code == 200, response.text
+        assert response.json()["file_id"] == body["file_id"]
         assert client.get(base + "/objects/" + sha, headers=auth).content == content
 
 

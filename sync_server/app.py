@@ -179,7 +179,10 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             raise SyncError(426, "PROTOCOL_INCOMPATIBLE")
         return {"protocol": 1, "max_object_size": 104857600, "chunk_size": 1048576,
                 "encryption": "transport-only", "history_retention": "indefinite",
-                "cursor_retention": "indefinite", "sharing": False}
+                "cursor_retention": "indefinite", "sharing": False,
+                "features": {"version": 1, "objects": "opaque-bytes-sha256",
+                             "revisions": "stable-file-id-cas", "paths": "portable-nfc-casefold",
+                             "uploads": "confirmed-offset", "execution": False}}
 
     @app.post("/sync/v1/auth/sessions")
     def login(body: Login, request: Request):
