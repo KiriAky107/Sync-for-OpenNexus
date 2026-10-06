@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { SyncApi, type Device, type ServiceStatus, type Vault } from './api'
+import { SyncApi, type Device, type ServiceStatus, type Vault, type OperationsPage, type OperationReceipt } from './api'
 
 const api = new SyncApi()
 const service = reactive<ServiceStatus>({ health: false, ready: false, protocol: 1, maxObjectSize: 100 * 1024 * 1024 })
@@ -19,6 +19,11 @@ const confirmPassword = ref('')
 const newVaultName = ref('')
 const vaults = ref<Vault[]>([])
 const devices = ref<Device[]>([])
+const operations = ref<OperationsPage | null>(null)
+const operationsBusy = ref(false)
+const operationsError = ref('')
+const operationsCheckedAt = ref('')
+let operationsVersion = 0
 const toast = ref('')
 const toastError = ref(false)
 let toastTimer: number | undefined
@@ -57,6 +62,50 @@ async function loadAccount() {
   const [vaultPayload, devicePayload] = await Promise.all([api.vaults(), api.devices()])
   vaults.value = vaultPayload.items
   devices.value = devicePayload.items
+  await refreshOperations()
+}
+
+function operationName(kind: OperationReceipt['kind']) {
+  return kind === 'backup' ? '备份' : kind === 'verify' ? '备份校验' : '空实例恢复'
+}
+function operationTime(value: string | null) {
+  return value ? new Date(value).toLocaleString() : '未收到完成回执'
+}
+function operationError(code: string) {
+  switch (code) {
+    case 'OPERATIONS_FORBIDDEN': return '本账户没有运维记录查看权限。'
+    case 'OPERATIONS_STATUS_UNAVAILABLE': return '运维记录暂时不可读取。请检查记录存储后刷新。'
+    case 'BACKUP_PENDING_UPLOADS': return '仍有未完成上传。请结束或清理上传后重新备份。'
+    case 'BACKUP_AGE_INVALID': return '备份时间超出本次校验允许的范围。'
+    case 'BACKUP_OBJECT_MISSING': return '备份中缺少对象文件。'
+    case 'BACKUP_OBJECT_INTEGRITY_FAILED': case 'OBJECT_INTEGRITY_FAILED': return '对象大小或 SHA-256 校验失败。'
+    case 'BACKUP_DATABASE_INTEGRITY_FAILED': case 'BACKUP_DATABASE_INVALID': return '数据库快照校验失败。'
+    case 'BACKUP_MANIFEST_INVALID': return '备份清单无效。'
+    case 'BACKUP_DESTINATION_EXISTS': return '备份目标已存在，请选择新的目录。'
+    case 'RESTORE_DATABASE_NOT_EMPTY': case 'RESTORE_BUCKET_NOT_EMPTY': return '恢复目标已有数据。请使用空实例。'
+    case 'OPERATION_INTERRUPTED': return '操作已中断，请核对原操作结果。'
+    default: return '操作未完成，请核对服务和原操作结果。'
+  }
+}
+async function refreshOperations(earlier = false) {
+  if (operationsBusy.value) return
+  const version = ++operationsVersion
+  const before = earlier ? operations.value?.next_before : null
+  if (earlier && before == null) return
+  operationsBusy.value = true
+  operationsError.value = ''
+  try {
+    const next = await api.operations(20, before)
+    if (version !== operationsVersion || !signedIn.value) return
+    operations.value = earlier && operations.value ? { ...next, items: [...operations.value.items, ...next.items] } : next
+    operationsCheckedAt.value = new Date().toLocaleString()
+  } catch (error) {
+    if (version !== operationsVersion) return
+    if (!api.signedIn) { leaveConsole(); return }
+    const code = error instanceof Error ? error.message : ''
+    if (code === 'OPERATIONS_FORBIDDEN') operations.value = null
+    operationsError.value = operationError(code)
+  } finally { if (version === operationsVersion) operationsBusy.value = false }
 }
 
 async function refreshAccount() {
@@ -72,6 +121,11 @@ async function refreshAccount() {
 }
 
 function leaveConsole() {
+  operationsVersion++
+  operations.value = null
+  operationsBusy.value = false
+  operationsError.value = ''
+  operationsCheckedAt.value = ''
   api.clear()
   signedIn.value = false
   password.value = ''
@@ -291,6 +345,28 @@ onBeforeUnmount(() => {
           </div>
         </section>
       </div>
+      <section class="surface operations-surface" aria-labelledby="operations-title">
+        <div class="surface-heading">
+          <div><p>Operations</p><h2 id="operations-title">备份与恢复记录</h2></div>
+          <button class="secondary-button" type="button" :disabled="operationsBusy" @click="refreshOperations()">{{ operationsBusy ? '正在读取…' : '刷新运维记录' }}</button>
+        </div>
+        <p class="surface-intro">查看备份、完整校验及空实例恢复的实际回执。未收到完成回执的操作需要核对原进程和目标数据。</p>
+        <p v-if="!checking && !service.ready" class="operations-error" role="alert">依赖就绪检查未通过。请核对数据库、对象存储和临时目录的读写状态。</p>
+        <p v-if="operationsError" class="operations-error" role="alert">{{ operationsError }}<template v-if="operations"> 已显示的记录尚未刷新。</template></p>
+        <p v-if="operationsCheckedAt" class="operations-updated">最近读取 · {{ operationsCheckedAt }}</p>
+        <p v-if="operations && !operations.configured" class="empty-state">服务尚未配置运维记录存储。</p>
+        <p v-else-if="operations && !operations.items.length" class="empty-state">尚无备份或恢复记录。</p>
+        <div v-if="operations" class="operations-list">
+          <article v-for="item in operations.items" :key="item.operation_id" class="operation-item" :class="item.state">
+            <div class="operation-heading"><strong>{{ operationName(item.kind) }}</strong><span>{{ item.state === 'succeeded' ? '已完成' : item.state === 'failed' ? '未完成' : '未收到完成回执' }}</span></div>
+            <p>开始 {{ operationTime(item.started_utc) }} · {{ item.finished_utc ? '完成 ' + operationTime(item.finished_utc) : '请核对原操作' }}</p>
+            <p v-if="item.object_count != null">{{ item.object_count }} 个对象 · {{ formatBytes(item.object_bytes ?? 0) }}<template v-if="item.verified_objects != null"> · {{ item.verified_objects }} 个对象已校验</template></p>
+            <p v-if="item.state === 'failed'" class="operations-error">{{ operationError(item.code) }} ({{ item.code }})</p>
+            <small>操作 {{ item.operation_id }}</small>
+          </article>
+        </div>
+        <button v-if="operations?.next_before" class="secondary-button" type="button" :disabled="operationsBusy" @click="refreshOperations(true)">加载更早记录</button>
+      </section>
       </template>
     </section>
   </main>

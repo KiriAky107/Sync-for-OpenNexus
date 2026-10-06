@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.28.0",
   "type": "module",
   "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "build": "vue-tsc --noEmit && vite build",
     "dev": "vite",
     "type-check": "vue-tsc --noEmit"
