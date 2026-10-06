@@ -79,3 +79,55 @@ jobs:
           name: sync-console-${{ github.sha }}
           path: sync_server/static
           if-no-files-found: error
+
+  production-operations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SYNC_OPERATIONS_PROBE: '1'
+      SYNC_OPERATIONS_PROBE_DATABASE_URL: postgresql+psycopg://postgres:controlled-probe-password@127.0.0.1:15432/postgres
+      SYNC_OPERATIONS_PROBE_S3_ENDPOINT: http://127.0.0.1:19000
+      AWS_ACCESS_KEY_ID: controlled-probe
+      AWS_SECRET_ACCESS_KEY: controlled-probe-password
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: 'true'
+      MINIO_ROOT_USER: controlled-probe
+      MINIO_ROOT_PASSWORD: controlled-probe-password
+    services:
+      database:
+        image: postgres:17.6
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: controlled-probe-password
+        ports: ['15432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+      - run: uv sync --frozen
+      - name: Start the owned S3 dependency
+        run: >-
+          docker run --detach --name sync-operations-s3
+          --publish 127.0.0.1:19000:9000
+          --env MINIO_ROOT_USER --env MINIO_ROOT_PASSWORD
+          minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+      - name: Verify real provider backup, restore, authority and failure receipts
+        run: uv run --frozen python -m tools.operations_probe --work-dir .build/production-operations
+      - name: Preserve the sanitized operation result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sync-production-operations-${{ github.sha }}
+          path: .build/production-operations/result.json
+          if-no-files-found: warn
+      - name: Stop only the owned S3 dependency
+        if: always()
+        run: docker rm --force sync-operations-s3
