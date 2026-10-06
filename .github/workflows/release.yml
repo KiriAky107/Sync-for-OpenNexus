@@ -1,0 +1,79 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the fixed verified commit as a new formal Release
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+concurrency:
+  group: sync-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+  publish:
+    if: inputs.publish
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read the fixed release tools
+        uses: actions/checkout@v7
+        with:
+          repository: KiriAky107/OpenNexus
+          ref: 276b449c27c079474c9d978fe633ff28b53b1c7b
+          path: .build/release-tools
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v8
+        with:
+          name: sync-deploy-${{ github.sha }}
+          path: .build/release-inputs
+      - name: Prepare source, deployment, checksums and bilingual release inputs
+        run: |
+          python - <<'PY'
+          import subprocess, sys, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('pyproject.toml').read_text('utf-8'))['project']['version']
+          archives = list(Path('.build/release-inputs').glob('*_deploy.zip'))
+          assert len(archives) == 1, 'One verified deployment archive is required'
+          subprocess.run([sys.executable, '.build/release-tools/scripts/prepare-release.py',
+              '--repository-dir', '.', '--repository', '${{ github.repository }}', '--product', 'OpenNexus Sync',
+              '--version', version, '--commit', '${{ github.sha }}', '--output', '.build/publication',
+              '--deployment', str(archives[0]), '--verification', '.build/release-inputs/verification.json',
+              '--notes', '.github/release-notes/' + version + '.md'], check=True)
+          PY
+          python .build/release-tools/scripts/github_release.py precheck --offline --repository-dir . --plan .build/publication/release-plan.json
+      - name: Stage, publish and verify the same immutable release plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python .build/release-tools/scripts/github_release.py precheck --repository-dir . --plan .build/publication/release-plan.json
+          python .build/release-tools/scripts/github_release.py stage --repository-dir . --plan .build/publication/release-plan.json
+          python .build/release-tools/scripts/github_release.py publish --repository-dir . --plan .build/publication/release-plan.json
+          python .build/release-tools/scripts/github_release.py verify --repository-dir . --plan .build/publication/release-plan.json
+      - name: Preserve complete publication inputs and recovery receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sync-publication-${{ github.sha }}
+          retention-days: 30
+          include-hidden-files: true
+          compression-level: 0
+          path: |
+            .build/publication/**
+            !.build/publication/**/*.lock
+          if-no-files-found: warn

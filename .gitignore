@@ -13,3 +13,9 @@ console/dist/
 backups/
 objects/
 staging/
+# Private notes remain local, including in new checkouts.
+/docs/
+/documents/
+/frontend/docs/
+/.local-plans/
+/.contract-desktop/
