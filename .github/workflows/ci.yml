@@ -113,12 +113,14 @@ jobs:
           python-version: '3.13'
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
       - run: uv sync --frozen
+      - name: Build the verified official S3 provider source
+        run: docker build --file Dockerfile.objects --tag opennexus-objects:probe .
       - name: Start the owned S3 dependency
         run: >-
           docker run --detach --name sync-operations-s3
           --publish 127.0.0.1:19000:9000
           --env MINIO_ROOT_USER --env MINIO_ROOT_PASSWORD
-          minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          opennexus-objects:probe server /data
       - name: Verify real provider backup, restore, authority and failure receipts
         run: uv run --frozen python -m tools.operations_probe --work-dir .build/production-operations
       - name: Preserve the sanitized operation result
