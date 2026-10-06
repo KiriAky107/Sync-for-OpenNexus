@@ -76,5 +76,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: sync-console-${{ github.sha }}
-          path: console/dist
+          path: sync_server/static
           if-no-files-found: error
