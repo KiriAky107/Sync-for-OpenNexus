@@ -140,6 +140,9 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         return {"access_token": access, "refresh_token": refresh, "expires_in": 900,
                 "device_id": device_id, "must_change_credentials": must_change}
 
+    from .usage import register_usage
+    register_usage(app, db, staging, vault, identity, SyncError, clock, operators)
+
     @app.get("/health")
     def health(response: Response):
         # 临时标识符可以让部署探测证明两个配置的工作线程都接收流量，而不会暴露主机身份。
@@ -342,7 +345,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             row(conn, "SELECT id FROM vaults WHERE id=:v" + suffix, v=damaged.vault_id)
             upload = row(
                 conn,
-                "SELECT id FROM uploads WHERE id=:id AND vault_id=:v AND device_id=:device",
+                "SELECT * FROM uploads WHERE id=:id AND vault_id=:v AND device_id=:device",
                 id=damaged.upload_id,
                 v=damaged.vault_id,
                 device=damaged.device_id,
@@ -350,6 +353,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             if upload:
                 # 文件优先：中断留下一行，其配额保留仍可通过到期维护释放。
                 (staging / upload["id"]).unlink(missing_ok=True)
+                from .usage import disposition
+                disposition(conn, upload, 'damaged', damaged.device_id, int(clock()))
                 run(conn, "DELETE FROM uploads WHERE id=:id", id=upload["id"])
 
     def upload_damaged(damaged):
@@ -403,9 +408,12 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     @app.delete("/sync/v1/vaults/{vault_id}/uploads/{upload_id}", status_code=204)
     def cancel_upload(vault_id: str, upload_id: str, authorization: str = Header(default="")):
         with db.transaction() as conn:
-            authorized_upload(conn, vault_id, upload_id, authorization)
+            upload = authorized_upload(conn, vault_id, upload_id, authorization)
+            try: (staging / upload_id).unlink(missing_ok=True)
+            except OSError: raise SyncError(503, 'STAGING_UNAVAILABLE') from None
+            from .usage import disposition
+            disposition(conn, upload, 'cancelled', upload['device_id'], int(clock()))
             run(conn, "DELETE FROM uploads WHERE id=:id", id=upload_id)
-        (staging / upload_id).unlink(missing_ok=True)
 
     @app.post("/sync/v1/vaults/{vault_id}/uploads/{upload_id}/complete")
     def complete_upload(vault_id: str, upload_id: str, authorization: str = Header(default="")):

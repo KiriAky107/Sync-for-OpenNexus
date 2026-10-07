@@ -21,6 +21,10 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS bootstrap_state (user_id TEXT PRIMARY KEY, created BIGINT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS revision_annotations (vault_id TEXT NOT NULL, sequence BIGINT NOT NULL, created BIGINT NOT NULL, restored_from BIGINT, PRIMARY KEY(vault_id, sequence))",
     "CREATE INDEX IF NOT EXISTS revisions_file_sequence ON revisions (vault_id, file_id, sequence)",
+    "CREATE TABLE IF NOT EXISTS upload_dispositions (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, state TEXT NOT NULL, actor_id TEXT NOT NULL, size BIGINT NOT NULL, offset_bytes BIGINT NOT NULL, confirmed_at BIGINT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS maintenance_summary (kind TEXT PRIMARY KEY, started_at BIGINT NOT NULL, finished_at BIGINT NOT NULL, duration_ms BIGINT NOT NULL, selected BIGINT NOT NULL, removed BIGINT NOT NULL, released_bytes BIGINT NOT NULL, filesystem_failures BIGINT NOT NULL, metadata_failures BIGINT NOT NULL, total_removed BIGINT NOT NULL, total_failures BIGINT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS uploads_vault_cursor ON uploads (vault_id, expires, id)",
+    "CREATE INDEX IF NOT EXISTS revisions_vault_hash ON revisions (vault_id, hash)",
 ]
 
 

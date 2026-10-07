@@ -22,6 +22,8 @@
 
 Current release: [v0.6.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0).
 
+Current development adds account-scoped storage accounting and upload management APIs. Usage separates current unique objects, objects retained only by history, unreferenced objects and active upload reservations, with a server confirmation time. History remains indefinitely retained.
+
 ## What’s New in 0.6.0
 
 - Declare synchronization types and capabilities for retained experiment sources, inputs and artifacts, paired with OpenNexus 0.6.0.
@@ -295,6 +297,14 @@ flowchart LR
 ```
 
 Backup directories contain authentication and session hashes. Protect them with restricted ACLs, encrypted storage, retention rules, and off-host copies. Practice restoration on a separate empty instance.
+
+## Storage and Upload Management APIs
+
+Read `GET /sync/v1/vaults/{vault_id}/usage` for the storage ledger. `logical_file_bytes` includes each current file, while object categories count identical content once. `charged_bytes` is the existing quota ledger; `accounting_matches` compares it with registered objects without silently changing either. Expired uploads stop reserving quota and remain listed until staging cleanup succeeds.
+
+Use `GET /sync/v1/vaults/{vault_id}/uploads?limit=30&before={cursor}` to inspect pending uploads across your own account's devices. Entries include their device, confirmed offset, declared size, expiry and revocation state. `POST .../uploads/{upload_id}/cancel` allows the vault owner to cancel one pending upload. The original transfer routes retain their original-device checks. Cancellation never removes a completed object; a completed upload returns its completion result.
+
+After an interrupted cancellation, read `GET .../uploads/{upload_id}/result` before choosing a retry. Results distinguish active, cancelled, completed, expired, damaged and unknown IDs. Cancellation receipts are immutable. If staging removal fails, the pending row remains retryable. Automatic expiration cleanup records classified filesystem/metadata failures, elapsed time and cumulative counts; only configured operator accounts can read `GET /sync/v1/admin/maintenance`. New receipt and summary tables are additive; older backups without them remain restorable.
 
 ## Development
 
