@@ -2,7 +2,7 @@
 
 **简体中文** | [English](README.md)
 
-[![版本](https://img.shields.io/badge/version-0.5.2--alpha1-5865f2)](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.5.2-alpha1)
+[![版本](https://img.shields.io/badge/version-0.6.0-5865f2)](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab)
 ![API](https://img.shields.io/badge/API-FastAPI-05998b)
 ![控制台](https://img.shields.io/badge/console-Vue%203-42b883)
@@ -12,9 +12,20 @@ Sync for OpenNexus 是 OpenNexus 的可选自托管同步服务，管理账户�
 
 对象服务通过 `Dockerfile.objects` 从 [MinIO 官方安全修复版本](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z) 构建，固定源码提交并检查归档 SHA-256，不再依赖已无法拉取的公共容器镜像，数据仍保存在既有 `/data` 卷。GitHub CI 使用同一构建文件，验证备份、数据库全部行的逐字恢复、对象哈希、恢复后的设备撤销及非空目标拒绝；上传产物只包含脱敏结果。
 
-> **Alpha 状态：**生产部署必须使用 TLS 和访问控制。PostgreSQL 与 S3 兼容对象存储是生产路径；SQLite 和明文 HTTP 仅用于隔离测试。
+> 生产部署使用 TLS 和访问控制。PostgreSQL 与 S3 兼容对象存储是生产路径；SQLite 和明文 HTTP 仅用于隔离测试。
 
-## 能力与边界
+
+## 0.6.0 更新
+
+- 固定实验源文件、输入及成果的同步类型与能力声明，配套 OpenNexus 0.6.0。
+- 提供设备与用量查询、可信进度及冲突回执，保持分块续传、摘要校验和幂等完成。
+- 管理控制台支持账户隔离、就绪检查和持久操作记录；CLI 可核对并恢复未知操作结果。
+- PostgreSQL 与 S3 部署提供完整备份校验和空目标恢复，逐字核对数据库、对象和设备撤销状态。
+- GitHub CI 验证协议、控制台及部署包，发布固定源码、部署归档和 SHA-256 清单。
+
+配套版本：OpenNexus **0.6.0**、Sync for OpenNexus **0.6.0**、Community for OpenNexus **0.6.0**。Sync 使用 `/sync/v1`，Community 使用 `/catalog/v1`；产品版本与协议版本分别维护。
+
+## 主要能力
 
 - Access/Refresh 会话和设备撤销。
 - 用户级 Vault 隔离、配额和有序修订流。

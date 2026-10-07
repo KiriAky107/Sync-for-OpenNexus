@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md) | **English**
 
-[![Version](https://img.shields.io/badge/version-0.5.2--alpha1-5865f2)](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.5.2-alpha1)
+[![Version](https://img.shields.io/badge/version-0.6.0-5865f2)](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab)
 ![API](https://img.shields.io/badge/API-FastAPI-05998b)
 ![Console](https://img.shields.io/badge/console-Vue%203-42b883)
@@ -10,9 +10,20 @@
 
 Sync for OpenNexus is the optional self-hosted synchronization service for OpenNexus vaults. It manages accounts, devices, immutable content objects, ordered file revisions, resumable uploads, backup, and empty-instance restoration without running the desktop AI Core or reading a user's local vault directly.
 
-> **Alpha status:** deploy behind TLS and access controls. PostgreSQL and S3-compatible object storage are the production path; SQLite and direct HTTP are limited to isolated tests.
+> Deploy behind TLS and access controls. PostgreSQL and S3-compatible object storage are the production path; SQLite and direct HTTP are limited to isolated tests.
 
-## Capabilities and boundaries
+
+## What’s New in 0.6.0
+
+- Declare synchronization types and capabilities for retained experiment sources, inputs and artifacts, paired with OpenNexus 0.6.0.
+- Expose devices, usage, progress and conflict receipts while retaining chunk offsets, digest verification and idempotent completion.
+- The management console isolates accounts and exposes readiness and durable operation records. The CLI can inspect and reconcile unknown outcomes.
+- PostgreSQL and S3 deployment includes verified backups and restoration into empty targets, checking database rows, object bytes and device revocation state.
+- GitHub CI verifies the protocol, console and deployment package; releases provide fixed source, deployment archives and SHA-256 checksums.
+
+Companion releases: OpenNexus **0.6.0**, Sync for OpenNexus **0.6.0**, and Community for OpenNexus **0.6.0**. Sync uses `/sync/v1`; Community uses `/catalog/v1`. Product versions and protocol versions are maintained separately.
+
+## Capabilities
 
 - Access/refresh sessions and per-device revocation.
 - Per-user Vault isolation, quotas, and ordered revision streams.
