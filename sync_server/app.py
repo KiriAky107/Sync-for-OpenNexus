@@ -20,7 +20,7 @@ from starlette.staticfiles import StaticFiles
 
 from .database import Database, password_hash, row, rows, run
 from .models import Commit, CredentialChange, Login, Refresh, Upload, VaultCreate
-from .readiness import Readiness
+from .readiness import DependencyFailure, Readiness
 from .reclamation import POLICY, pending as reclamation_pending, reclaimed
 
 
@@ -90,6 +90,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             response.headers["Referrer-Policy"] = "no-referrer"
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["X-Frame-Options"] = "DENY"
+        if request.url.path.startswith('/sync/v1/admin/'):
+            response.headers['Cache-Control'] = 'private, no-store'
         return response
 
     @app.get("/", include_in_schema=False)
@@ -161,11 +163,14 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         return {"status": "ok"}
 
     def readiness_probe():
-        with db.transaction() as conn:
-            if row(conn, "SELECT version FROM schema_version")["version"] != 1:
-                raise SyncError(503, "SCHEMA_INCOMPATIBLE")
+        from sqlalchemy.exc import SQLAlchemyError
+        try:
+            with db.transaction() as conn:
+                if row(conn, "SELECT version FROM schema_version")["version"] != 1:
+                    raise DependencyFailure('SCHEMA_INCOMPATIBLE')
+        except SQLAlchemyError:
+            raise DependencyFailure('DATABASE_UNAVAILABLE') from None
         key = "health-probe/" + secrets.token_hex(16)
-        stored = False
         try:
             with tempfile.TemporaryFile(dir=staging) as local:
                 local.write(b"opennexus-ready")
@@ -173,16 +178,43 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                 os.fsync(local.fileno())
                 local.seek(0)
                 if local.read() != b"opennexus-ready":
-                    raise OSError("STAGING_INTEGRITY")
+                    raise DependencyFailure('STAGING_INTEGRITY')
+        except OSError:
+            raise DependencyFailure('STAGING_UNAVAILABLE') from None
+        failure = None
+        try:
             objects.put(key, b"opennexus-ready")
-            stored = True
             if objects.get(key) != b"opennexus-ready":
-                raise OSError("STORAGE_INTEGRITY")
+                raise DependencyFailure('OBJECT_STORAGE_INTEGRITY')
+        except Exception as fault:
+            failure = fault if isinstance(fault,DependencyFailure) else DependencyFailure('OBJECT_STORAGE_UNAVAILABLE')
         finally:
-            if stored:
+            try:
                 objects.delete(key)
+            except Exception:
+                failure = failure or DependencyFailure('OBJECT_STORAGE_UNAVAILABLE')
+        if failure:
+            raise failure from None
 
     readiness = Readiness(readiness_probe, cache_seconds=1)
+    app.state.readiness = readiness
+    from .admin import register_admin
+    register_admin(app,db,identity,SyncError,clock,operators,quota,readiness)
+    from sqlalchemy.exc import SQLAlchemyError
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    @app.exception_handler(SQLAlchemyError)
+    async def metadata_unavailable(_request, _failure):
+        return JSONResponse({'error':{'code':'DATABASE_UNAVAILABLE','details':{}}},status_code=503,headers={'X-OpenNexus-Worker':worker_id})
+
+    @app.exception_handler(OSError)
+    async def filesystem_unavailable(_request, _failure):
+        return JSONResponse({'error':{'code':'STORAGE_UNAVAILABLE','details':{}}},status_code=503,headers={'X-OpenNexus-Worker':worker_id})
+
+    @app.exception_handler(BotoCoreError)
+    @app.exception_handler(ClientError)
+    async def object_storage_unavailable(_request, _failure):
+        return JSONResponse({'error':{'code':'OBJECT_STORAGE_UNAVAILABLE','details':{}}},status_code=503,headers={'X-OpenNexus-Worker':worker_id})
 
     @app.get("/ready")
     async def ready(response: Response):
@@ -300,7 +332,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         with db.transaction() as conn:
             session = identity(conn, authorization)
             vault_id = secrets.token_hex(16)
-            run(conn, "INSERT INTO vaults VALUES (:id,:user,:name,0,:quota,0)", id=vault_id, user=session["user_id"], name=body.name, quota=quota)
+            policy = row(conn,'SELECT default_quota FROM account_policy WHERE user_id=:id',id=session['user_id'])
+            run(conn, "INSERT INTO vaults VALUES (:id,:user,:name,0,:quota,0)", id=vault_id, user=session["user_id"], name=body.name, quota=policy['default_quota'] if policy else quota)
             return {"vault_id": vault_id, "name": body.name}
 
     @app.get("/sync/v1/vaults")
@@ -416,6 +449,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                 return {"offset": offset + len(data)}
         except StagingDamaged as damaged:
             upload_damaged(damaged)
+        except OSError:
+            raise SyncError(503, 'STAGING_UNAVAILABLE') from None
 
     @app.delete("/sync/v1/vaults/{vault_id}/uploads/{upload_id}", status_code=204)
     def cancel_upload(vault_id: str, upload_id: str, authorization: str = Header(default="")):

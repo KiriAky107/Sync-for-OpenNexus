@@ -165,9 +165,11 @@ def test_upload_limits_and_failed_fsync_preserve_durable_offset(env, monkeypatch
 
     with monkeypatch.context() as patch:
         patch.setattr(os, "fsync", failed)
-        with pytest.raises(OSError, match="controlled fsync failure"):
-            client.put(path + "?offset=0", headers=auth, content=data)
-    # 从线程传播故障； SQL交易没有推进。
+        failed_response = client.put(path + "?offset=0", headers=auth, content=data)
+        assert failed_response.status_code == 503
+        assert failed_response.json()['error']['code'] == 'STAGING_UNAVAILABLE'
+        assert 'controlled fsync failure' not in failed_response.text
+    # 故障以固定分类响应返回；SQL 交易没有推进，也没有确认未刷盘字节。
     assert client.get(path, headers=auth).json()["offset"] == 0
     assert (staging / info["upload_id"]).stat().st_size == 0
     assert client.put(path + "?offset=0", headers=auth, content=data).json() == {"offset": len(data)}

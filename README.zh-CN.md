@@ -112,6 +112,25 @@ python -m sync_server gc-apply --directory D:/OpenNexus-backups/before-gc --plan
 
 旧完成上传的未引用对象被回收后，结果变为 `reclaimed`，再次完成返回 `OBJECT_RECLAIMED`，需要重新上传后再提交修订。已引用对象及其完成重试仍可用。控制台会单独提示待核对的回收对象。
 
+### 7. 开通账户并查看服务诊断
+
+先固定初始凭据，用 `operator-id` 查询管理员的稳定账户 ID，再按[备份与恢复](#备份与恢复)配置 `SYNC_OPERATOR_USER_IDS`。获授权的设备会话可使用管理 API；账户叫 `admin` 不会自动获得管理角色。设备仍受会话过期和撤销检查约束。
+
+| 操作 | API |
+| --- | --- |
+| 查看角色与分页账户 | `GET /sync/v1/admin/access`、`GET /sync/v1/admin/accounts` |
+| 创建账户 | `POST /sync/v1/admin/accounts`，携带 `operation_id`、`username`、`password`、`default_quota` |
+| 查看账户的分页知识库、设备和汇总 | `GET /sync/v1/admin/accounts/{user_id}` |
+| 设置未来知识库的默认配额 | `PUT .../accounts/{user_id}/policy`，携带 `operation_id`、`expected_revision`、`quota` |
+| 调整单个知识库配额 | `PUT .../accounts/{user_id}/vaults/{vault_id}/quota`，携带 `operation_id`、`expected_quota`、`quota` |
+| 撤销指定账户的设备 | `POST .../accounts/{user_id}/devices/{device_id}/revoke`，携带 `operation_id` |
+| 核对未知写入结果 | `GET /sync/v1/admin/operations/{operation_id}` |
+| 读取分类诊断 | `GET /sync/v1/admin/diagnostics` |
+
+每个审核后的动作使用新的 32 位小写十六进制操作 ID。回执丢失时先读取原 ID；已完成结果不会覆盖后来的密码或配额设置。创建结果不返回密码，回执不保存明文密码。默认配额仅应用于新知识库；既有账户在明确配置前沿用部署默认值。单库配额不能低于已计费对象和有效上传预留的总量。
+
+账户和账户内资源按 `limit` 与稳定 ID 游标分页。账户列表返回 `next_before`；详情返回 `vaults_next_before` 和 `devices_next_before`，后续分别通过 `vault_before` 或 `device_before` 读取。诊断以固定代码区分数据库、暂存、对象存储、完整性和超时，提供探测时间与缓存标记。超时后仍复用尚未结束的探测。普通账户不能读取管理资源；这些操作目前通过 API 使用。
+
 ## 系统架构
 
 ```mermaid

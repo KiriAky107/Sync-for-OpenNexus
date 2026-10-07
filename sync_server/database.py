@@ -28,6 +28,8 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS reclamation_plans (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, actor_id TEXT NOT NULL, created BIGINT NOT NULL, expires BIGINT NOT NULL, backup_hash TEXT NOT NULL, snapshot TEXT NOT NULL, state TEXT NOT NULL, finished BIGINT, code TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS reclamation_objects (plan_id TEXT NOT NULL, vault_id TEXT NOT NULL, hash TEXT NOT NULL, size BIGINT NOT NULL, state TEXT NOT NULL, code TEXT NOT NULL, confirmed_at BIGINT NOT NULL, PRIMARY KEY(plan_id,hash))",
     "CREATE INDEX IF NOT EXISTS reclamation_objects_pending ON reclamation_objects (vault_id,hash,state)",
+    "CREATE TABLE IF NOT EXISTS account_policy (user_id TEXT PRIMARY KEY, default_quota BIGINT NOT NULL, revision BIGINT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS admin_receipts (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, kind TEXT NOT NULL, target_id TEXT NOT NULL, input_salt TEXT NOT NULL, fingerprint TEXT NOT NULL, response TEXT NOT NULL, confirmed_at BIGINT NOT NULL)",
 ]
 
 

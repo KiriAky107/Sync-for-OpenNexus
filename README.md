@@ -114,6 +114,25 @@ Review the fixed candidate hashes, sizes, protected counts and total bytes befor
 
 If an old completed upload's unreferenced object was reclaimed, its result becomes `reclaimed` and completion returns `OBJECT_RECLAIMED`; start a new upload before submitting a revision. Referenced objects and their completion retries remain available. The console shows pending reclamation separately from ordinary uploads.
 
+### 7. Provision accounts and review service diagnostics
+
+Fix the initial credentials, resolve an operator's stable account ID with `operator-id`, and configure `SYNC_OPERATOR_USER_IDS` as described in [Backup and Restore](#backup-and-restore). Authorized device sessions can use the administration API; an account named `admin` has no implied role. The authorizing device remains subject to expiry and revocation.
+
+| Task | API |
+| --- | --- |
+| Read role and paged accounts | `GET /sync/v1/admin/access`, `GET /sync/v1/admin/accounts` |
+| Create an account | `POST /sync/v1/admin/accounts` with `operation_id`, `username`, `password`, `default_quota` |
+| Read an account's paged vaults, devices and totals | `GET /sync/v1/admin/accounts/{user_id}` |
+| Set default quota for future vaults | `PUT .../accounts/{user_id}/policy` with `operation_id`, `expected_revision`, `quota` |
+| Adjust one vault's quota | `PUT .../accounts/{user_id}/vaults/{vault_id}/quota` with `operation_id`, `expected_quota`, `quota` |
+| Revoke the selected account's device | `POST .../accounts/{user_id}/devices/{device_id}/revoke` with `operation_id` |
+| Reconcile an uncertain write | `GET /sync/v1/admin/operations/{operation_id}` |
+| Read classified diagnostics | `GET /sync/v1/admin/diagnostics` |
+
+Use a new 32-character lowercase hexadecimal operation ID for each reviewed action. If a response is lost, read that original ID first; a completed result never changes later passwords or quota settings. Creation does not return the password, and receipts retain no plaintext password. Defaults apply to new vaults; existing accounts retain the deployment default until explicitly configured. A vault's new quota cannot be below its charged objects plus active upload reservations.
+
+Accounts and per-account resources use `limit` and stable ID cursors. Account lists return `next_before`; details return `vaults_next_before` and `devices_next_before`, supplied as `vault_before` or `device_before` on subsequent reads. Diagnostics identify database, staging, object-store, integrity and timeout failures with fixed codes, probe observation times and a cache flag. A still-running probe is reused after timeout. Ordinary accounts cannot read these administration resources. These operations are currently available through the API.
+
 ## Architecture
 
 ```mermaid
