@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { SyncApi, type Device, type ServiceStatus, type Vault, type OperationsPage, type OperationReceipt } from './api'
+import VaultHistory from './VaultHistory.vue'
 
 const api = new SyncApi()
 const service = reactive<ServiceStatus>({ health: false, ready: false, protocol: 1, maxObjectSize: 100 * 1024 * 1024 })
 const checking = ref(true)
 const signedIn = ref(false)
 const busy = ref(false)
+const historyPending = ref(false)
 const username = ref('')
 const password = ref('')
 const deviceName = ref('OpenNexus Web Console')
@@ -282,7 +284,7 @@ onBeforeUnmount(() => {
     <section v-else class="console-view">
       <div class="console-heading">
         <div><div class="eyebrow"><span /> Connected workspace</div><h1>同步空间</h1><p>{{ sessionLabel }}</p></div>
-        <button class="secondary-button" type="button" :disabled="busy" @click="logout">退出登录</button>
+        <button class="secondary-button" type="button" :disabled="busy || historyPending" @click="logout">退出登录</button>
       </div>
 
       <section v-if="credentialsRequired" class="login-card credential-card" aria-labelledby="credential-title">
@@ -340,11 +342,12 @@ onBeforeUnmount(() => {
             <article v-for="device in devices" :key="device.id" class="device-item" :class="{ revoked: device.revoked }">
               <div class="device-symbol">{{ firstCharacter(device.name, 'D') }}</div>
               <div class="item-copy"><strong>{{ device.name }}</strong><small>{{ device.revoked ? '已撤销' : '可访问' }}<template v-if="device.id === api.deviceId"> · 当前设备</template></small></div>
-              <button v-if="!device.revoked" class="danger-button" type="button" :disabled="busy" @click="revokeDevice(device)">撤销</button>
+              <button v-if="!device.revoked" class="danger-button" type="button" :disabled="busy || historyPending" @click="revokeDevice(device)">撤销</button>
             </article>
           </div>
         </section>
       </div>
+      <VaultHistory :api="api" :vaults="vaults" @refreshed="refreshAccount" @expired="leaveConsole" @pending="historyPending = $event" />
       <section class="surface operations-surface" aria-labelledby="operations-title">
         <div class="surface-heading">
           <div><p>Operations</p><h2 id="operations-title">备份与恢复记录</h2></div>

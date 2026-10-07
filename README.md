@@ -76,11 +76,18 @@ Open `/console/` through your reverse proxy to sign in, fix the initial credenti
 2. Configure the Sync server, account and remote vault in OpenNexus. Each device uses its own session; provider credentials are unrelated to Sync credentials.
 3. Synchronize, inspect progress and review any conflict before choosing the content to keep. Renames retain file identity; the server never executes uploaded files.
 
-### 2. Manage device access
+### 2. Review and restore a file
+
+1. Open **Files and history** in the console, choose a vault and select a file. Search by relative path or include deleted files; paged lists keep a fixed snapshot until refreshed.
+2. Select a revision to see its time, device, path and restore source. Older records without a known time remain marked unknown. Compare complete text previews and bounded line differences, or inspect a safe image preview; unsupported files retain their original size and hash for review.
+3. Check the destination path and acknowledge the current content and historical source. A renamed file defaults to its current name; if a deleted file's path is occupied, choose another path. Restore creates a new revision with the same file identity.
+4. If the current revision changes, refresh and review again. If the response is lost, use **Check restore result** first. Retry is offered only when no completion receipt is found and keeps the original operation ID; later edits remain intact.
+
+### 3. Manage device access
 
 Open the device list in the console and revoke the selected session. Its next authenticated request fails. Vault files and retained revisions remain available to other authorized devices.
 
-### 3. Verify a backup before recovery
+### 4. Verify a backup before recovery
 
 Create a backup, run `verify-backup`, and inspect the saved receipt. Recover only into an empty database and object bucket, then check `/ready` and reconnect a test device. See [Backup and Restore](#backup-and-restore) for commands and unknown-result handling.
 

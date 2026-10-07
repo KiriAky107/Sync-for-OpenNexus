@@ -10,7 +10,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from botocore.exceptions import BotoCoreError, ClientError
 
 from .database import row, rows
-from .models import Commit, Restore
+from .models import Commit, Restore, canonical_path
 
 TEXT_LIMIT = 1024 * 1024
 IMAGE_LIMIT = 5 * 1024 * 1024
@@ -67,6 +67,29 @@ def register_history_routes(app, db, objects, vault, perform_commit, error):
             raise error(409, 'CURSOR_INVALID')
         return end
 
+    @app.get('/sync/v1/vaults/{vault_id}/restore-target')
+    def restore_target(vault_id: str, path: str = Query(min_length=1),
+                       file_id: str = Query(pattern=r'^[a-zA-Z0-9-]{16,80}$'),
+                       authorization: str = Header(default='')):
+        try:
+            canonical_path(path)
+        except ValueError:
+            raise error(422, 'INVALID_REQUEST') from None
+        with db.transaction() as conn:
+            _, item = vault(conn, vault_id, authorization)
+            head = current(conn, vault_id, file_id)
+            if not head:
+                raise error(404, 'FILE_NOT_FOUND')
+            key = path.casefold()
+            occupied = row(conn, 'SELECT f.file_id,r.path FROM files f JOIN revisions r '
+                'ON r.vault_id=f.vault_id AND r.sequence=f.sequence '
+                'WHERE f.vault_id=:v AND f.deleted=0 AND f.file_id<>:f AND '
+                '(f.path_key=:key OR substr(f.path_key,1,:length)=:desc '
+                'OR substr(:key,1,length(f.path_key)+1)=f.path_key||\'/\') LIMIT 1',
+                v=vault_id, f=file_id, key=key, length=len(key)+1, desc=key+'/')
+            return {'path': path, 'current_revision': head['sequence'], 'boundary': item['sequence'],
+                    'occupied': dict(occupied) if occupied else None}
+
     @app.get('/sync/v1/vaults/{vault_id}/files')
     def files(vault_id: str, before: int = Query(default=9223372036854775807, ge=1),
               boundary: int | None = Query(default=None, ge=0), limit: int = Query(default=50, ge=1, le=100),
@@ -95,6 +118,16 @@ def register_history_routes(app, db, objects, vault, perform_commit, error):
             value = current(conn, vault_id, file_id)
             if not value:
                 raise error(404, 'FILE_NOT_FOUND')
+            return dict(value)
+
+    @app.get('/sync/v1/vaults/{vault_id}/files/{file_id}/restore-results/{operation_id}')
+    def restore_result(vault_id: str, file_id: str, operation_id: str, authorization: str = Header(default='')):
+        with db.transaction() as conn:
+            vault(conn, vault_id, authorization)
+            value = row(conn, DETAILS + 'WHERE r.vault_id=:v AND r.file_id=:f AND r.operation_id=:op '
+                        'AND a.restored_from IS NOT NULL', v=vault_id, f=file_id, op=operation_id)
+            if not value:
+                raise error(404, 'RESTORE_NOT_FOUND')
             return dict(value)
 
     @app.get('/sync/v1/vaults/{vault_id}/history/{file_id}')

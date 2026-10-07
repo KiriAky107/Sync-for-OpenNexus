@@ -47,8 +47,57 @@ export interface OperationsPage {
   next_before: number | null
 }
 
+export interface Revision {
+  sequence: number
+  file_id: string
+  base_revision: number
+  path: string
+  operation: 'put' | 'delete'
+  hash: string | null
+  size: number
+  device_id: string
+  device_name?: string | null
+  operation_id: string
+  created_at?: number | null
+  restored_from?: number | null
+}
+export interface FilePage {
+  items: Revision[]
+  boundary: number
+  has_more: boolean
+  next_before: number | null
+}
+export interface HistoryPage extends FilePage { current: Revision | null }
+interface PreviewMetadata { sequence: number; path: string; size: number; hash: string | null }
+export type Preview = PreviewMetadata & (
+  { kind: 'text'; format: string; text: string } |
+  { kind: 'image'; mime: 'image/png'; data: string; width: number; height: number; first_frame_only: boolean } |
+  { kind: 'deleted' } |
+  { kind: 'unsupported'; reason: string; limit?: number }
+)
+export interface RestoreRequest {
+  operation_id: string
+  source_revision: number
+  base_revision: number
+  path: string | null
+}
+export interface RestoreTarget {
+  path: string
+  current_revision: number
+  boundary: number
+  occupied: { file_id: string; path: string } | null
+}
+export class SyncApiError extends Error {
+  readonly status: number
+  readonly details: Record<string, unknown>
+  constructor(code: string, status: number, details: Record<string, unknown> = {}) {
+    super(code)
+    this.status = status
+    this.details = details
+  }
+}
 interface ErrorPayload {
-  error?: { code?: string }
+  error?: { code?: string; details?: Record<string, unknown> }
 }
 
 async function safeJson<T>(response: Response): Promise<T | null> {
@@ -112,7 +161,7 @@ export class SyncApi {
       const payload = await safeJson<ErrorPayload>(response)
       this.assertGeneration(generation)
       if (response.status === 401) this.clear()
-      throw new Error(payload?.error?.code ?? `HTTP_${response.status}`)
+      throw new SyncApiError(payload?.error?.code ?? `HTTP_${response.status}`, response.status, payload?.error?.details)
     }
     if (response.status === 204) return undefined as T
     const payload = await safeJson<T>(response)
@@ -179,6 +228,36 @@ export class SyncApi {
   }
 
   vaults() { return this.request<{ items: Vault[] }>('/sync/v1/vaults') }
+  files(vault: string, options: { q?: string; includeDeleted?: boolean; before?: number | null; boundary?: number; limit?: number } = {}) {
+    const query = new URLSearchParams({ limit: String(options.limit ?? 30), q: options.q ?? '', include_deleted: String(options.includeDeleted ?? false) })
+    if (options.before != null) query.set('before', String(options.before))
+    if (options.boundary != null) query.set('boundary', String(options.boundary))
+    return this.request<FilePage>(`/sync/v1/vaults/${encodeURIComponent(vault)}/files?${query}`)
+  }
+  file(vault: string, file: string) {
+    return this.request<Revision>(`/sync/v1/vaults/${encodeURIComponent(vault)}/files/${encodeURIComponent(file)}`)
+  }
+  history(vault: string, file: string, options: { before?: number | null; boundary?: number; limit?: number } = {}) {
+    const query = new URLSearchParams({ limit: String(options.limit ?? 30) })
+    if (options.before != null) query.set('before', String(options.before))
+    if (options.boundary != null) query.set('boundary', String(options.boundary))
+    return this.request<HistoryPage>(`/sync/v1/vaults/${encodeURIComponent(vault)}/history/${encodeURIComponent(file)}?${query}`)
+  }
+  preview(vault: string, file: string, sequence: number) {
+    return this.request<Preview>(`/sync/v1/vaults/${encodeURIComponent(vault)}/history/${encodeURIComponent(file)}/${sequence}/preview`)
+  }
+  restoreTarget(vault: string, file: string, path: string) {
+    const query = new URLSearchParams({ file_id: file, path })
+    return this.request<RestoreTarget>(`/sync/v1/vaults/${encodeURIComponent(vault)}/restore-target?${query}`)
+  }
+  restore(vault: string, file: string, intent: Readonly<RestoreRequest>) {
+    return this.request<Revision>(`/sync/v1/vaults/${encodeURIComponent(vault)}/files/${encodeURIComponent(file)}/restore`, {
+      method: 'POST', body: JSON.stringify(intent),
+    })
+  }
+  restoreResult(vault: string, file: string, operation: string) {
+    return this.request<Revision>(`/sync/v1/vaults/${encodeURIComponent(vault)}/files/${encodeURIComponent(file)}/restore-results/${encodeURIComponent(operation)}`)
+  }
   devices() { return this.request<{ items: Device[] }>('/sync/v1/devices') }
   operations(limit = 20, before?: number | null) {
     const query = new URLSearchParams({ limit: String(limit) })
