@@ -19,6 +19,8 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS login_limits (key TEXT PRIMARY KEY, started BIGINT NOT NULL, attempts INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS upload_receipts (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, device_id TEXT NOT NULL, hash TEXT NOT NULL, completed BIGINT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS bootstrap_state (user_id TEXT PRIMARY KEY, created BIGINT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS revision_annotations (vault_id TEXT NOT NULL, sequence BIGINT NOT NULL, created BIGINT NOT NULL, restored_from BIGINT, PRIMARY KEY(vault_id, sequence))",
+    "CREATE INDEX IF NOT EXISTS revisions_file_sequence ON revisions (vault_id, file_id, sequence)",
 ]
 
 

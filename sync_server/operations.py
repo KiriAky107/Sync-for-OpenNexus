@@ -14,7 +14,7 @@ import shutil
 import tempfile
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from .database import SCHEMA
 
@@ -48,7 +48,9 @@ TABLES: dict[str, tuple[str, ...]] = {
     "login_limits": ("key", "started", "attempts"),
     "upload_receipts": ("id", "vault_id", "device_id", "hash", "completed"),
     "bootstrap_state": ("user_id", "created"),
+    "revision_annotations": ("vault_id", "sequence", "created", "restored_from"),
 }
+OPTIONAL_TABLES = frozenset({'revision_annotations'})
 
 
 class OperationsError(RuntimeError):
@@ -94,6 +96,9 @@ def _write_database_snapshot(conn, destination: Path) -> dict[str, int]:
     counts = {}
     with destination.open("x", encoding="utf-8", newline="\n") as output:
         for table, columns in TABLES.items():
+            if table in OPTIONAL_TABLES and not inspect(conn).has_table(table):
+                counts[table] = 0
+                continue
             projection = ",".join(f'"{column}"' for column in columns)
             ordering = ",".join(f'"{column}"' for column in columns)
             rows = conn.execute(
@@ -235,8 +240,8 @@ def _load_manifest(source: Path, max_age_hours: float) -> dict[str, Any]:
         or manifest.get("object_bytes") != sum(item["size"] for item in normalized)
         or not CONTENT_HASH.fullmatch(str(manifest.get("database_sha256", "")))
         or not isinstance(rows, dict)
-        or set(rows) != set(TABLES)
-        or any(not isinstance(rows[name], int) or rows[name] < 0 for name in TABLES)
+        or not set(TABLES).difference(OPTIONAL_TABLES) <= set(rows) <= set(TABLES)
+        or any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in rows.values())
     ):
         raise OperationsError("BACKUP_MANIFEST_INVALID")
     manifest["objects"] = normalized
@@ -262,7 +267,7 @@ def _load_database_snapshot(source: Path, manifest: dict[str, Any]) -> dict[str,
                 restored[table].append(values)
     except (OSError, json.JSONDecodeError) as error:
         raise OperationsError("BACKUP_DATABASE_INVALID") from error
-    if any(len(restored[table]) != manifest["database_rows"][table] for table in TABLES):
+    if any(len(restored[table]) != manifest["database_rows"].get(table, 0) for table in TABLES):
         raise OperationsError("BACKUP_DATABASE_INVALID")
     if restored["schema_version"] != [[1]]:
         raise OperationsError("BACKUP_DATABASE_INVALID")

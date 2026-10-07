@@ -67,3 +67,15 @@ class Commit(DTO):
     @classmethod
     def path_valid(cls, value):
         return canonical_path(value)
+
+
+class Restore(DTO):
+    operation_id: str = Field(pattern=r"^[a-zA-Z0-9-]{16,80}$")
+    source_revision: int = Field(ge=1)
+    base_revision: int = Field(ge=0)
+    path: str | None = Field(default=None, min_length=1)
+
+    @field_validator("path")
+    @classmethod
+    def path_valid(cls, value):
+        return canonical_path(value) if value is not None else None

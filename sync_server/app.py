@@ -435,8 +435,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         (staging / upload_id).unlink(missing_ok=True)
         return {"complete": True, "content_hash": upload["hash"]}
 
-    def perform_commit(conn, vault_id, body, session, item):
-        fingerprint = digest(body.model_dump_json())
+    def perform_commit(conn, vault_id, body, session, item, *, fingerprint=None, restored_from=None):
+        fingerprint = fingerprint or digest(body.model_dump_json())
         previous = row(conn, "SELECT * FROM revisions WHERE vault_id=:v AND operation_id=:op", v=vault_id, op=body.operation_id)
         if previous:
             if previous["fingerprint"] != fingerprint or previous["device_id"] != session["device_id"]:
@@ -464,6 +464,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         run(conn, "DELETE FROM files WHERE vault_id=:v AND file_id=:f", v=vault_id, f=body.file_id)
         run(conn, "INSERT INTO files VALUES (:v,:f,:s,:key,:deleted)", v=vault_id, f=body.file_id, s=sequence,
             key=body.path.casefold(), deleted=int(body.operation == "delete"))
+        run(conn, "INSERT INTO revision_annotations VALUES (:v,:s,:created,:source)",
+            v=vault_id, s=sequence, created=int(clock()), source=restored_from)
         return dict(row(conn, "SELECT * FROM revisions WHERE vault_id=:v AND sequence=:s", v=vault_id, s=sequence))
 
     @app.post("/sync/v1/vaults/{vault_id}/revisions")
@@ -483,13 +485,6 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             items = rows(conn, "SELECT * FROM revisions WHERE vault_id=:v AND sequence>:cursor AND sequence<=:end ORDER BY sequence LIMIT :limit", v=vault_id, cursor=cursor, end=end, limit=limit)
             next_cursor = items[-1]["sequence"] if items else cursor
             return {"items": items, "cursor": next_cursor, "boundary": end, "has_more": next_cursor < end}
-
-    @app.get("/sync/v1/vaults/{vault_id}/history/{file_id}")
-    def history(vault_id: str, file_id: str, before: int = Query(default=9223372036854775807, ge=1),
-                limit: int = Query(default=100, ge=1, le=500), authorization: str = Header(default="")):
-        with db.transaction() as conn:
-            vault(conn, vault_id, authorization)
-            return {"items": rows(conn, "SELECT * FROM revisions WHERE vault_id=:v AND file_id=:f AND sequence<:before ORDER BY sequence DESC LIMIT :limit", v=vault_id, f=file_id, before=before, limit=limit)}
 
     @app.get("/sync/v1/vaults/{vault_id}/objects/{content_hash}")
     def get_object(vault_id: str, content_hash: str, authorization: str = Header(default="")):
@@ -521,4 +516,6 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             path.unlink(missing_ok=True)
             raise
 
+    from .history import register_history_routes
+    register_history_routes(app, db, objects, vault, perform_commit, SyncError)
     return app
