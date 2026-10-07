@@ -21,6 +21,7 @@ from starlette.staticfiles import StaticFiles
 from .database import Database, password_hash, row, rows, run
 from .models import Commit, CredentialChange, Login, Refresh, Upload, VaultCreate
 from .readiness import Readiness
+from .reclamation import POLICY, pending as reclamation_pending, reclaimed
 
 
 class SyncError(Exception):
@@ -139,6 +140,16 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                                user=device["user_id"]))
         return {"access_token": access, "refresh_token": refresh, "expires_in": 900,
                 "device_id": device_id, "must_change_credentials": must_change}
+
+    def object_unlocked(conn, vault_id, content_hash):
+        if reclamation_pending(conn, vault_id, content_hash):
+            raise SyncError(503, 'OBJECT_RECLAMATION_PENDING')
+
+    @app.get('/sync/v1/vaults/{vault_id}/retention')
+    def retention(vault_id: str, authorization: str = Header(default='')):
+        with db.transaction() as conn:
+            vault(conn, vault_id, authorization)
+            return {'schema_version': 1, 'confirmed_at': int(clock()), **POLICY}
 
     from .usage import register_usage
     register_usage(app, db, staging, vault, identity, SyncError, clock, operators)
@@ -302,6 +313,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     def begin_upload(vault_id: str, body: Upload, authorization: str = Header(default="")):
         with db.transaction() as conn:
             session, item = vault(conn, vault_id, authorization, lock=True)
+            object_unlocked(conn, vault_id, body.content_hash)
             found = row(conn, "SELECT * FROM objects WHERE vault_id=:v AND hash=:h", v=vault_id, h=body.content_hash)
             if found:
                 if found["size"] != body.size:
@@ -423,8 +435,13 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
                 receipt = row(conn, "SELECT hash FROM upload_receipts WHERE id=:id AND vault_id=:v AND device_id=:d",
                               id=upload_id, v=vault_id, d=session["device_id"])
                 if receipt:
+                    object_unlocked(conn, vault_id, receipt['hash'])
+                    if not row(conn, 'SELECT 1 FROM objects WHERE vault_id=:v AND hash=:h', v=vault_id, h=receipt['hash']):
+                        raise SyncError(409 if reclaimed(conn, vault_id, receipt['hash']) else 503,
+                                        'OBJECT_RECLAIMED' if reclaimed(conn, vault_id, receipt['hash']) else 'STORAGE_INTEGRITY')
                     return {"complete": True, "content_hash": receipt["hash"]}
                 upload = authorized_upload(conn, vault_id, upload_id, authorization)
+                object_unlocked(conn, vault_id, upload['hash'])
                 path = reconcile_staging(upload)
                 with path.open("rb") as stream:
                     content_hash = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -455,6 +472,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             actual = row(conn, "SELECT * FROM revisions WHERE vault_id=:v AND sequence=:s", v=vault_id, s=current["sequence"]) if current else None
             raise SyncError(409, "REVISION_CONFLICT", {"current": dict(actual) if actual else None})
         if body.operation == "put":
+            object_unlocked(conn, vault_id, body.content_hash)
             obj = row(conn, "SELECT * FROM objects WHERE vault_id=:v AND hash=:h", v=vault_id, h=body.content_hash)
             if not obj or obj["size"] != body.size:
                 raise SyncError(409, "OBJECT_NOT_READY")
@@ -498,6 +516,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     def get_object(vault_id: str, content_hash: str, authorization: str = Header(default="")):
         with db.transaction() as conn:
             vault(conn, vault_id, authorization)
+            object_unlocked(conn, vault_id, content_hash)
             obj = row(conn, "SELECT * FROM objects WHERE vault_id=:v AND hash=:h", v=vault_id, h=content_hash)
             if not obj:
                 raise SyncError(404, "OBJECT_NOT_FOUND")

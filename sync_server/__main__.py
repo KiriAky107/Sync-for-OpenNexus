@@ -29,7 +29,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
-        choices=["serve", "initialize", "migrate", "create-user", "bootstrap-user", "cleanup-uploads", "backup", "verify-backup", "restore", "operation-records", "operator-id"],
+        choices=["serve", "initialize", "migrate", "create-user", "bootstrap-user", "cleanup-uploads", "backup", "verify-backup", "restore", "operation-records", "operator-id", "gc-preview", "gc-apply", "gc-status"],
     )
     parser.add_argument("--workers", type=int, choices=[1, 2], default=2)
     parser.add_argument("--username")
@@ -38,6 +38,10 @@ def main():
     parser.add_argument("--max-age-hours", type=float, default=24)
     parser.add_argument("--limit", type=int, choices=range(1, 101), default=20)
     parser.add_argument("--before", type=int)
+    parser.add_argument("--vault-id")
+    parser.add_argument("--plan-id")
+    parser.add_argument("--confirm-plan")
+    parser.add_argument("--grace-hours", type=float, default=168)
     args = parser.parse_args()
     from .operation_journal import OperationJournal
     journal = OperationJournal(operations_path())
@@ -54,7 +58,30 @@ def main():
     if not url.startswith("postgresql+psycopg://"):
         raise SystemExit("生产入口只支持 PostgreSQL")
     db = Database(url)
-    if args.command == "operator-id":
+    if args.command in {'gc-preview', 'gc-apply', 'gc-status'}:
+        from .reclamation import apply, preview, status
+        if args.command != 'gc-status':
+            db.migrate()
+        if args.command == 'gc-status':
+            if not args.plan_id:
+                raise SystemExit('gc-status needs --plan-id')
+            result = status(db, args.plan_id)
+        else:
+            if args.directory is None:
+                raise SystemExit('gc-preview and gc-apply need --directory')
+            if args.command == 'gc-preview':
+                if not args.vault_id:
+                    raise SystemExit('gc-preview needs --vault-id')
+                result = preview(db, args.directory, args.vault_id, grace_hours=args.grace_hours,
+                                 limit=args.limit, max_age_hours=args.max_age_hours, workers=args.io_workers)
+            else:
+                if not args.plan_id or not args.confirm_plan:
+                    raise SystemExit('gc-apply needs --plan-id and --confirm-plan')
+                objects = S3Objects(os.environ['SYNC_S3_ENDPOINT'], os.environ['SYNC_S3_BUCKET'])
+                result = apply(db, objects, args.directory, args.plan_id, confirm_plan=args.confirm_plan,
+                               max_age_hours=args.max_age_hours, workers=args.io_workers)
+        print(json.dumps(result))
+    elif args.command == "operator-id":
         if not args.username:
             raise SystemExit("operator-id needs --username")
         from .database import row

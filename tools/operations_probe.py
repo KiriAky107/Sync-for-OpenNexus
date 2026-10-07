@@ -252,6 +252,11 @@ def probe(work: Path):
         report['served_protocol'] = served_protocol(repo, work, journal, restored_url, endpoint, restored_objects.bucket, base, auth, ids)
         report['checks'].append('actual_production_serve_readiness_handshake_and_restored_identity')
 
+        stage = 'protected_reclamation_with_real_providers'
+        gc_backup = protected_reclamation(repo, work, journal, source, original_objects,
+                                          source_url, endpoint, vault_id, base, auth, files)
+        report['checks'].append('reviewed_gc_preserves_history_and_recovers_lost_s3_delete_reply')
+
         stage = 'empty_target_and_corruption_gates'
         cli(*common, *source_settings, 'restore', '--directory', str(snapshot), expected='RESTORE_DATABASE_NOT_EMPTY')
         sentinel = b'owned-blocked-target'
@@ -277,6 +282,11 @@ def probe(work: Path):
         finally:
             target.write_bytes(original)
         report['checks'].append('nonempty_targets_and_corruption_rejected_without_writes')
+        from sync_server.operations import restore_backup
+        recovered = restore_backup(damaged, damaged_objects, gc_backup, workers=2)
+        if recovered['verified_objects'] != 4:
+            raise ProbeFailure('GC_BACKUP_RECOVERY_COUNT_CHANGED')
+        report['checks'].append('pre_gc_backup_recovers_all_four_objects_into_empty_providers')
         records = cli(*common, *source_settings, 'operation-records')['items']
         if len(records) != 8 or sum(item['state'] == 'failed' for item in records) != 4:
             raise ProbeFailure('DURABLE_CLI_RECEIPTS_CHANGED')
@@ -312,6 +322,61 @@ def probe(work: Path):
             report['passed'] = False
         (work/'result.json').write_text(json.dumps(report, indent=2)+'\n', 'utf-8')
     return report
+
+
+def protected_reclamation(repo, work, journal, db, objects, url, endpoint, vault_id, base, auth, files):
+    """Only caller-owned database/bucket; real S3 delete with a lost local reply."""
+    from sync_server.operations import create_backup
+    from sync_server.reclamation import apply
+    content = 'unreferenced recovery bytes 中文\r\n'.encode()
+    sha = hashlib.sha256(content).hexdigest()
+    with TestClient(create_app(db, objects, work/'gc-staging')) as client:
+        info = checked(client, 'POST', base+'/uploads', headers=auth, json={'content_hash':sha,'size':len(content)})
+        path = base+'/uploads/'+info['upload_id']
+        checked(client,'PUT',path+'?offset=0',headers=auth,content=content)
+        checked(client,'POST',path+'/complete',headers=auth)
+        old = int(time.time())-8*86400
+        with db.transaction() as conn:
+            conn.execute(text('UPDATE objects SET created=:old WHERE vault_id=:v AND hash=:h'),{'old':old,'v':vault_id,'h':sha})
+            conn.execute(text('UPDATE upload_receipts SET completed=:old WHERE vault_id=:v AND hash=:h'),{'old':old,'v':vault_id,'h':sha})
+        backup = work/'pre-gc-snapshot'
+        create_backup(db,objects,backup,workers=2)
+        settings = (repo,work,journal,url,endpoint,objects.bucket)
+        plan = cli(*settings,'gc-preview','--vault-id',vault_id,'--directory',str(backup))
+        if [item['hash'] for item in plan['preview']['candidates']] != [sha] or plan['preview']['protected_counts'].get('revision') != 3:
+            raise ProbeFailure('GC_REFERENCE_PROTECTION_CHANGED')
+        real_delete=objects.delete
+        def lose_delete_reply(key):
+            real_delete(key)
+            raise OSError('controlled lost S3 delete reply')
+        objects.delete=lose_delete_reply
+        try:
+            pending=apply(db,objects,backup,plan['plan_id'],confirm_plan=plan['plan_id'])
+        finally:
+            objects.delete=real_delete
+        if pending['state'] != 'running' or pending['pending_objects'] != 1:
+            raise ProbeFailure('GC_DURABLE_INTENTION_MISSING')
+        if client.get(base+'/objects/'+sha,headers=auth).status_code != 503:
+            raise ProbeFailure('GC_PENDING_OBJECT_NOT_GUARDED')
+        original=cli(*settings,'gc-status','--plan-id',plan['plan_id'])
+        if original['pending_objects'] != 1:
+            raise ProbeFailure('GC_READONLY_RECONCILIATION_CHANGED')
+        result=cli(*settings,'gc-apply','--directory',str(backup),'--plan-id',plan['plan_id'],'--confirm-plan',plan['plan_id'])
+        if result['state'] != 'complete' or result['reclaimed_objects'] != 1 or result['reclaimed_bytes'] != len(content):
+            raise ProbeFailure('GC_RESUME_RESULT_CHANGED')
+        if checked(client,'GET',base+'/uploads/'+info['upload_id']+'/result',headers=auth)['state'] != 'reclaimed':
+            raise ProbeFailure('GC_COMPLETION_RESULT_MISLEADING')
+        if checked(client,'GET',base+'/usage',headers=auth)['charged_bytes'] != sum(len(body) for _,body in files):
+            raise ProbeFailure('GC_QUOTA_LEDGER_CHANGED')
+        for _,body in files:
+            digest=hashlib.sha256(body).hexdigest()
+            if objects.get(vault_id+'/'+digest) != body:
+                raise ProbeFailure('GC_REMOVED_REVISION_OBJECT')
+        if (backup/'objects'/vault_id/sha).read_bytes() != content:
+            raise ProbeFailure('GC_RECOVERY_BYTES_CHANGED')
+        if checked(client,'GET',base+'/changes',headers=auth)['cursor'] != 3:
+            raise ProbeFailure('GC_PRUNED_REVISION_CURSOR')
+    return backup
 
 
 def main():

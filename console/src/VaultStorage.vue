@@ -59,6 +59,8 @@ function describe(result: UploadResult): string {
     completed: '上传已经完成，对象已保留。取消操作没有删除它。', cancelled: '上传已取消，预留已释放。',
     expired: '上传已过期，不再预留配额。若仍在列表中，可取消以清理暂存。',
     damaged: '暂存已损坏，原上传已结束。同步设备需要重新上传。',
+    reclaimed: '已完成上传的未引用对象已由管理员回收。需要重新上传后再提交修订。',
+    reclamation_pending: '管理员回收尚未核对完成。请等待管理员恢复原计划，再读取结果。',
     active: '原上传仍未完成。你可以重试已确认的取消操作。',
     not_found: '服务没有该上传或回执的记录，无法确认原结果。请刷新列表核对。',
   }
@@ -66,7 +68,7 @@ function describe(result: UploadResult): string {
 }
 async function finish(result: UploadResult): Promise<void> {
   receipt.value = result; notice.value = describe(result)
-  if (['completed', 'cancelled', 'damaged'].includes(result.state) || (result.state === 'expired' && result.expires == null)) {
+  if (['completed', 'cancelled', 'damaged', 'reclaimed'].includes(result.state) || (result.state === 'expired' && result.expires == null)) {
     intent.value = null; selected.value = null; acknowledged.value = false
     mutationBusy.value = false
     await read(true)
@@ -119,6 +121,7 @@ onBeforeUnmount(() => { alive = false; ticket++; emit('pending', false) })
     <template v-if="usage">
       <p class="operations-updated">{{ stale ? '上次读取，尚未刷新' : '服务器确认' }} · {{ time(usage.confirmed_at) }} · 修订 {{ usage.sequence }}</p>
       <p v-if="!usage.accounting_matches" class="operations-error" role="alert">配额账目与已登记对象的总量不一致，请联系管理员核对。</p>
+      <p v-if="usage.reclamation_pending_objects" class="operations-error" role="alert">{{ usage.reclamation_pending_objects }} 个对象（{{ bytes(usage.reclamation_pending_bytes) }}）的回收结果待管理员核对，仍保留原账目。</p>
       <div class="storage-ledger"><article><small>当前唯一对象</small><strong>{{ bytes(usage.current_object_bytes) }}</strong></article><article><small>仅历史引用</small><strong>{{ bytes(usage.historical_only_bytes) }}</strong></article><article><small>尚未引用对象</small><strong>{{ bytes(usage.unreferenced_object_bytes) }}</strong></article><article><small>有效上传预留</small><strong>{{ bytes(usage.reserved_bytes) }}</strong></article></div>
       <p class="surface-intro">已计费 {{ bytes(usage.charged_bytes) }} / {{ bytes(usage.quota) }} · 可用 {{ bytes(usage.available_bytes) }}。{{ usage.active_files }} 个当前文件的逻辑大小为 {{ bytes(usage.logical_file_bytes) }}，相同对象只计费一次。历史无限保留。</p>
       <progress class="storage-progress" :value="usage.charged_bytes + usage.reserved_bytes" :max="Math.max(1, usage.quota)" aria-label="对象及上传预留用量" />

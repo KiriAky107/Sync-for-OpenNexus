@@ -22,7 +22,7 @@
 
 当前版本： [v0.6.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0)。
 
-当前开发新增本账户存储账目与上传管理 API。用量分别显示当前唯一对象、仅历史引用的对象、未引用对象和有效上传预留，并提供服务器确认时间。历史仍无限保留。
+当前开发新增本账户存储账目、上传管理与经过审核的对象回收。用量分别显示当前唯一对象、仅历史引用的对象、未引用对象和有效上传预留，并提供服务器确认时间。历史仍无限保留。
 
 ## 0.6.0 更新
 
@@ -94,6 +94,23 @@ docker compose logs sync
 ### 5. 恢复前校验备份
 
 先创建备份、运行 `verify-backup` 并核对保存的回执。仅向空数据库和空对象桶恢复，之后检查 `/ready`，再连接测试设备。命令和未知结果处理见[备份与恢复](#备份与恢复)。
+
+### 6. 回收前审核未引用对象
+
+升级全部服务工作进程后，有数据库和对象存储访问权限的管理员可以创建新备份，再执行以下命令。将 `VAULT_ID` 和 `PLAN_ID` 替换为实际编号。创建备份前，先完成或取消未完成上传。
+
+```powershell
+python -m sync_server backup --directory D:/OpenNexus-backups/before-gc
+python -m sync_server gc-preview --directory D:/OpenNexus-backups/before-gc --vault-id VAULT_ID --grace-hours 168 --limit 20
+python -m sync_server gc-status --plan-id PLAN_ID
+python -m sync_server gc-apply --directory D:/OpenNexus-backups/before-gc --plan-id PLAN_ID --confirm-plan PLAN_ID
+```
+
+确认前核对固定候选的哈希、大小、保护计数和总量。默认宽限期为七天，最短为 24 小时。所有修订都受保护，包括已删除文件的历史；未完成上传和近期完成回执同样阻止回收。候选不在已校验备份中时会被排除。预览一小时后过期，知识库或候选引用变化后需重新预览。
+
+`gc-status` 只读核对原计划。计划仍在运行且存在待核对对象时，应先检查原进程，再使用同一编号和备份继续 `gc-apply`。结果未知的对象不能被新修订引用，原账目保持到删除确认；逐对象结果区分已回收、受保护和待核对。保留备份以便恢复到空实例。回收不裁剪修订游标，也不会自动执行。
+
+旧完成上传的未引用对象被回收后，结果变为 `reclaimed`，再次完成返回 `OBJECT_RECLAIMED`，需要重新上传后再提交修订。已引用对象及其完成重试仍可用。控制台会单独提示待核对的回收对象。
 
 ## 系统架构
 
@@ -306,7 +323,7 @@ flowchart LR
 
 使用 `GET /sync/v1/vaults/{vault_id}/uploads?limit=30&before={cursor}` 查看本账户各设备的未完成上传，包括设备、确认偏移、声明大小、期限与撤销状态。知识库所有者可通过 `POST .../uploads/{upload_id}/cancel` 取消一个未完成上传；原传输接口继续核对原设备。取消不会删除已完成的对象，已经完成的上传会返回其完成结果。
 
-取消请求中断后，先读取 `GET .../uploads/{upload_id}/result` 再决定是否重试。结果区分有效、已取消、已完成、已过期、已损坏和未知 ID，取消回执保持不可变。暂存删除失败会保留可重试记录。自动过期清理记录文件系统/元数据失败分类、耗时和累计计数；只有配置的 operator 账户可读取 `GET /sync/v1/admin/maintenance`。新增回执与摘要表采用增量迁移，缺少它们的旧备份仍可恢复。
+取消请求中断后，先读取 `GET .../uploads/{upload_id}/result` 再决定是否重试。结果区分有效、已取消、已完成、已过期、已损坏、已回收、回收待核对和未知 ID，取消回执保持不可变。暂存删除失败会保留可重试记录。自动过期清理记录文件系统/元数据失败分类、耗时和累计计数；只有配置的 operator 账户可读取 `GET /sync/v1/admin/maintenance`。`GET .../retention` 提供本知识库的无限历史与手动回收规则。回执、摘要和回收表采用增量迁移，缺少它们的旧备份仍可恢复。
 
 ## 本地开发
 

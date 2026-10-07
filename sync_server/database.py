@@ -25,6 +25,9 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS maintenance_summary (kind TEXT PRIMARY KEY, started_at BIGINT NOT NULL, finished_at BIGINT NOT NULL, duration_ms BIGINT NOT NULL, selected BIGINT NOT NULL, removed BIGINT NOT NULL, released_bytes BIGINT NOT NULL, filesystem_failures BIGINT NOT NULL, metadata_failures BIGINT NOT NULL, total_removed BIGINT NOT NULL, total_failures BIGINT NOT NULL)",
     "CREATE INDEX IF NOT EXISTS uploads_vault_cursor ON uploads (vault_id, expires, id)",
     "CREATE INDEX IF NOT EXISTS revisions_vault_hash ON revisions (vault_id, hash)",
+    "CREATE TABLE IF NOT EXISTS reclamation_plans (id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, actor_id TEXT NOT NULL, created BIGINT NOT NULL, expires BIGINT NOT NULL, backup_hash TEXT NOT NULL, snapshot TEXT NOT NULL, state TEXT NOT NULL, finished BIGINT, code TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS reclamation_objects (plan_id TEXT NOT NULL, vault_id TEXT NOT NULL, hash TEXT NOT NULL, size BIGINT NOT NULL, state TEXT NOT NULL, code TEXT NOT NULL, confirmed_at BIGINT NOT NULL, PRIMARY KEY(plan_id,hash))",
+    "CREATE INDEX IF NOT EXISTS reclamation_objects_pending ON reclamation_objects (vault_id,hash,state)",
 ]
 
 

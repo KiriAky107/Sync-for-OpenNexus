@@ -22,7 +22,7 @@
 
 Current release: [v0.6.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0).
 
-Current development adds account-scoped storage accounting and upload management APIs. Usage separates current unique objects, objects retained only by history, unreferenced objects and active upload reservations, with a server confirmation time. History remains indefinitely retained.
+Current development adds account-scoped storage accounting, upload management and reviewed object reclamation. Usage separates current unique objects, objects retained only by history, unreferenced objects and active upload reservations, with a server confirmation time. History remains indefinitely retained.
 
 ## What’s New in 0.6.0
 
@@ -96,6 +96,23 @@ Open **Storage and uploads** and select a vault. Compare current objects, retain
 ### 5. Verify a backup before recovery
 
 Create a backup, run `verify-backup`, and inspect the saved receipt. Recover only into an empty database and object bucket, then check `/ready` and reconnect a test device. See [Backup and Restore](#backup-and-restore) for commands and unknown-result handling.
+
+### 6. Review unreferenced objects before reclamation
+
+After upgrading all service workers, an operator with database and object-store access can create a fresh backup and run the following commands. Replace `VAULT_ID` and `PLAN_ID` with the actual identifiers. Finish or cancel pending uploads before creating the backup.
+
+```powershell
+python -m sync_server backup --directory D:/OpenNexus-backups/before-gc
+python -m sync_server gc-preview --directory D:/OpenNexus-backups/before-gc --vault-id VAULT_ID --grace-hours 168 --limit 20
+python -m sync_server gc-status --plan-id PLAN_ID
+python -m sync_server gc-apply --directory D:/OpenNexus-backups/before-gc --plan-id PLAN_ID --confirm-plan PLAN_ID
+```
+
+Review the fixed candidate hashes, sizes, protected counts and total bytes before confirming. The default seven-day grace cannot be reduced below 24 hours. Every revision, including a deleted file's history, remains protected; pending uploads and recent completion receipts also block reclamation. Objects absent from the verified backup are excluded. The preview expires after one hour and changes to the vault or candidate references require a new preview.
+
+`gc-status` reads the original plan without replaying it. A running plan with pending objects requires reconciliation, not a new plan: after checking the original process, resume `gc-apply` with the same identifiers and backup. Prepared objects stay unavailable to new commits while their outcome is unknown, and their original charge remains until deletion is confirmed. Per-object results distinguish reclaimed, protected and pending objects. Keep the backup for recovery into an empty instance. Reclamation never trims revision cursors or runs automatically.
+
+If an old completed upload's unreferenced object was reclaimed, its result becomes `reclaimed` and completion returns `OBJECT_RECLAIMED`; start a new upload before submitting a revision. Referenced objects and their completion retries remain available. The console shows pending reclamation separately from ordinary uploads.
 
 ## Architecture
 
@@ -308,7 +325,7 @@ Read `GET /sync/v1/vaults/{vault_id}/usage` for the storage ledger. `logical_fil
 
 Use `GET /sync/v1/vaults/{vault_id}/uploads?limit=30&before={cursor}` to inspect pending uploads across your own account's devices. Entries include their device, confirmed offset, declared size, expiry and revocation state. `POST .../uploads/{upload_id}/cancel` allows the vault owner to cancel one pending upload. The original transfer routes retain their original-device checks. Cancellation never removes a completed object; a completed upload returns its completion result.
 
-After an interrupted cancellation, read `GET .../uploads/{upload_id}/result` before choosing a retry. Results distinguish active, cancelled, completed, expired, damaged and unknown IDs. Cancellation receipts are immutable. If staging removal fails, the pending row remains retryable. Automatic expiration cleanup records classified filesystem/metadata failures, elapsed time and cumulative counts; only configured operator accounts can read `GET /sync/v1/admin/maintenance`. New receipt and summary tables are additive; older backups without them remain restorable.
+After an interrupted cancellation, read `GET .../uploads/{upload_id}/result` before choosing a retry. Results distinguish active, cancelled, completed, expired, damaged, reclaimed, pending reclamation and unknown IDs. Cancellation receipts are immutable. If staging removal fails, the pending row remains retryable. Automatic expiration cleanup records classified filesystem/metadata failures, elapsed time and cumulative counts; only configured operator accounts can read `GET /sync/v1/admin/maintenance`. `GET .../retention` exposes the vault's indefinite-history and manual-reclamation rules. Receipt, summary and reclamation tables are additive; older backups without them remain restorable.
 
 ## Development
 

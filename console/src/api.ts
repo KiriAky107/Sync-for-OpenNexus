@@ -33,6 +33,7 @@ export interface Usage {
   unreferenced_object_bytes: number; logical_file_bytes: number; active_files: number; reserved_bytes: number
   confirmed_upload_bytes: number; pending_uploads: number; expired_uploads: number; available_bytes: number
   accounting_matches: boolean; history_retention: 'indefinite'
+  reclamation_pending_objects: number; reclamation_pending_bytes: number
 }
 export interface PendingUpload {
   id: string; vault_id: string; device_id: string; device_name: string; device_revoked: number
@@ -40,7 +41,7 @@ export interface PendingUpload {
 }
 export interface UploadPage { schema_version: 1; confirmed_at: number; items: PendingUpload[]; next_before: string | null }
 export interface UploadResult {
-  state: 'active' | 'expired' | 'cancelled' | 'completed' | 'damaged' | 'not_found'
+  state: 'active' | 'expired' | 'cancelled' | 'completed' | 'damaged' | 'not_found' | 'reclaimed' | 'reclamation_pending'
   confirmed_at: number; size?: number; offset_bytes?: number; content_hash?: string; expires?: number
 }
 
