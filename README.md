@@ -1,17 +1,26 @@
-# Sync for OpenNexus
+<div align="center">
 
-[简体中文](README.zh-CN.md) | **English**
+  <img src=".github/assets/opennexus-logo.svg" alt="OpenNexus Logo" width="100" height="100" />
 
-[![Version](https://img.shields.io/badge/version-0.6.0-5865f2)](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0)
-![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab)
-![API](https://img.shields.io/badge/API-FastAPI-05998b)
-![Console](https://img.shields.io/badge/console-Vue%203-42b883)
-[![License](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+  <h1>Sync for OpenNexus</h1>
 
-Sync for OpenNexus is the optional self-hosted synchronization service for OpenNexus vaults. It manages accounts, devices, immutable content objects, ordered file revisions, resumable uploads, backup, and empty-instance restoration without running the desktop AI Core or reading a user's local vault directly.
+  <p><strong>Self-hosted Synchronization for Your Knowledge Vaults</strong></p>
 
-> Deploy behind TLS and access controls. PostgreSQL and S3-compatible object storage are the production path; SQLite and direct HTTP are limited to isolated tests.
+  <p>Keep your OpenNexus vaults in sync across devices, retain file revisions and recover data on infrastructure you control.</p>
 
+  <p>
+    <a href="README.zh-CN.md">简体中文</a> • <a href="#quick-start">Quick Start</a> • <a href="#highlights">Highlights</a> • <a href="#architecture">Architecture</a> • <a href="#development">Development</a> • <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases">Releases</a>
+  </p>
+
+  <p>
+    <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/Version-0.6.0-5865f2?style=flat-square" alt="Version" /></a> <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml"><img src="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <img src="https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square" alt="Python 3.12+" /> <img src="https://img.shields.io/badge/API-FastAPI-05998b?style=flat-square" alt="FastAPI" /> <img src="https://img.shields.io/badge/Console-Vue_3-42b883?style=flat-square" alt="Vue 3" /> <img src="https://img.shields.io/badge/Metadata-PostgreSQL-4169e1?style=flat-square" alt="PostgreSQL" /> <img src="https://img.shields.io/badge/Objects-S3_compatible-f97316?style=flat-square" alt="S3-compatible storage" /> <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
+  </p>
+
+</div>
+
+---
+
+Current release: [v0.6.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0).
 
 ## What’s New in 0.6.0
 
@@ -21,19 +30,59 @@ Sync for OpenNexus is the optional self-hosted synchronization service for OpenN
 - PostgreSQL and S3 deployment includes verified backups and restoration into empty targets, checking database rows, object bytes and device revocation state.
 - GitHub CI verifies the protocol, console and deployment package; releases provide fixed source, deployment archives and SHA-256 checksums.
 
-Companion releases: OpenNexus **0.6.0**, Sync for OpenNexus **0.6.0**, and Community for OpenNexus **0.6.0**. Sync uses `/sync/v1`; Community uses `/catalog/v1`. Product versions and protocol versions are maintained separately.
+## Highlights
 
-## Capabilities
+- **Devices and sessions**: Connect desktop clients with access and refresh sessions, then revoke a lost device from the console.
+- **Portable vault files**: Transfer notes, attachments, experiment sources and inputs through stable file identities and canonical relative paths.
+- **Resumable uploads**: Continue from confirmed chunk offsets and verify the completed object's size and SHA-256 before committing a revision.
+- **Retained history**: Keep ordered revisions and immutable objects. Base-revision checks detect concurrent edits rather than silently replacing them.
+- **Usage and isolation**: Keep each account's vaults separate and enforce quotas using the server's object inventory and upload reservations.
+- **Recovery and operations**: Verify backups, restore into an empty instance and inspect durable operation records in the CLI or the same-origin Vue console.
 
-- Access/refresh sessions and per-device revocation.
-- Per-user Vault isolation, quotas, and ordered revision streams.
-- Resumable chunk uploads with offset, size, SHA-256, and idempotent completion checks.
-- Immutable object storage separated from PostgreSQL metadata.
-- Conflict-safe base revisions consumed by the OpenNexus desktop outbox/inbox client.
-- Repeatable-read backup and verified restoration into an empty deployment.
-- Same-origin Vue management console for health, account, Vault, and device operations.
+## Quick Start
 
-The server does not run models, index Markdown, install extensions, or accept OpenNexus provider credentials. It does not reuse Community tokens.
+Deploy behind a TLS reverse proxy with PostgreSQL metadata and S3-compatible object storage. The Compose stack binds the API to `127.0.0.1:8080`.
+
+```powershell
+Copy-Item .env.example .env
+# Generate independent values for every blank secret, then edit .env.
+docker compose up -d --build
+docker compose ps
+docker compose logs sync
+```
+
+The first empty database creates a temporary `admin` account and emits `SYNC_BOOTSTRAP_CREDENTIALS` to the Sync container log. Sign in once and immediately change both username and password. Until fixed, restart rotates the bootstrap password and revokes old sessions.
+
+### Required deployment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `POSTGRES_PASSWORD` | PostgreSQL container password |
+| `SYNC_DATABASE_URL` | URL-encoded PostgreSQL SQLAlchemy URL |
+| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | Initializer-only object-store administration |
+| `SYNC_ACCESS_KEY_ID`, `SYNC_SECRET_ACCESS_KEY` | Bucket-scoped runtime identity |
+| `SYNC_S3_BUCKET` | Existing or initialized object bucket |
+| `SYNC_BIND_ADDRESS`, `SYNC_PORT` | Host bind address and port |
+
+Never reuse MinIO root credentials as runtime credentials. Keep the bucket name stable during upgrades.
+
+Open `/console/` through your reverse proxy to sign in, fix the initial credentials and create a remote vault. SQLite and direct HTTP fixtures are for isolated tests.
+
+## Core Workflows
+
+### 1. Connect and synchronize a vault
+
+1. Sign in to the console and create a remote vault. Keep its identity when configuring other devices.
+2. Configure the Sync server, account and remote vault in OpenNexus. Each device uses its own session; provider credentials are unrelated to Sync credentials.
+3. Synchronize, inspect progress and review any conflict before choosing the content to keep. Renames retain file identity; the server never executes uploaded files.
+
+### 2. Manage device access
+
+Open the device list in the console and revoke the selected session. Its next authenticated request fails. Vault files and retained revisions remain available to other authorized devices.
+
+### 3. Verify a backup before recovery
+
+Create a backup, run `verify-backup`, and inspect the saved receipt. Recover only into an empty database and object bucket, then check `/ready` and reconnect a test device. See [Backup and Restore](#backup-and-restore) for commands and unknown-result handling.
 
 ## Architecture
 
@@ -55,7 +104,7 @@ flowchart LR
 
 The object service is built with `Dockerfile.objects` from the [official MinIO security release](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z). The build fixes the source commit and checks the archive SHA-256, so it does not depend on the withdrawn public container image. The existing `/data` volume remains the storage location. GitHub CI builds the same recipe and verifies backup, byte-for-byte database recovery, object hashes, restored device revocation, and refusal to restore into occupied targets; only a sanitized result is uploaded.
 
-## Sync protocol flow
+## Sync Protocol Flow
 
 ```mermaid
 sequenceDiagram
@@ -89,7 +138,7 @@ sequenceDiagram
     Client->>API: Download required immutable objects
 ```
 
-## Database model
+## Database Model
 
 ```mermaid
 erDiagram
@@ -172,15 +221,15 @@ erDiagram
     }
 ```
 
-The schema also contains `schema_version`, `login_limits`, and `bootstrap_state`. Object bytes live in S3; PostgreSQL remains the authority for ownership, revision ordering, quota accounting, receipts, and object inventory.
+The schema also contains `schema_version`, `login_limits`, `bootstrap_state` and `revision_annotations`. Annotations retain known revision times and restore sources; older revisions without this evidence keep an unknown time. Object bytes live in S3; PostgreSQL remains the authority for ownership, revision ordering, quota accounting, receipts, and object inventory.
 
 ### Opaque file contents and experiment-file compatibility
 
 The handshake declares `encryption: transport-only`. Deploy behind HTTPS / TLS: object content and file paths remain readable by the service, so transport encryption does not provide end-to-end encryption. The additive `features` declaration identifies the existing SHA-256 object, stable file identity, canonical path and confirmed-offset upload contracts. Sync never executes received files; clients that use the original v1 fields can continue to ignore this declaration.
 
-Sync API v1 treats uploaded object contents as opaque bytes. It validates canonical relative paths, content hashes, object size and revision ownership; it does not parse or execute files. OpenNexus desktop clients can therefore sync `.py` source, `.json` and `.csv` input data under the vault-root `experiments/` directory through the existing revision and object protocol without a database migration or a new API version. The desktop controls which local file types enter this protocol. Older clients that do not recognize these extensions leave them untouched and do not run them.
+Sync API v1 transfers object contents as opaque bytes, validating canonical relative paths, content hashes, object size and revision ownership. Historical previews separately decode bounded text and images; the service never executes files. OpenNexus desktop clients can sync `.py` source, `.json` and `.csv` input data under the vault-root `experiments/` directory through the existing revision and object protocol without changing the API version. The desktop controls which local file types enter this protocol. Older clients that do not recognize these extensions leave them untouched and do not run them.
 
-## Repository layout
+## Repository Layout
 
 | Path | Purpose |
 | --- | --- |
@@ -191,32 +240,17 @@ Sync API v1 treats uploaded object contents as opaque bytes. It validates canoni
 | `compose.yaml` | PostgreSQL, MinIO, initializer, and hardened Sync service |
 | `compose.test.yaml` | Explicit isolated-test overrides |
 
-## Quick start
+## Ecosystem Repositories
 
-```powershell
-Copy-Item .env.example .env
-# Generate independent values for every blank secret, then edit .env.
-docker compose up -d --build
-docker compose ps
-docker compose logs sync
-```
-
-The first empty database creates a temporary `admin` account and emits `SYNC_BOOTSTRAP_CREDENTIALS` to the Sync container log. Sign in once and immediately change both username and password. Until fixed, restart rotates the bootstrap password and revokes old sessions.
-
-### Required deployment variables
-
-| Variable | Purpose |
+| Repository | Role |
 | --- | --- |
-| `POSTGRES_PASSWORD` | PostgreSQL container password |
-| `SYNC_DATABASE_URL` | URL-encoded PostgreSQL SQLAlchemy URL |
-| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | Initializer-only object-store administration |
-| `SYNC_ACCESS_KEY_ID`, `SYNC_SECRET_ACCESS_KEY` | Bucket-scoped runtime identity |
-| `SYNC_S3_BUCKET` | Existing or initialized object bucket |
-| `SYNC_BIND_ADDRESS`, `SYNC_PORT` | Host bind address and port |
+| [OpenNexus](https://github.com/KiriAky107/OpenNexus) | Local vault editing, AI workflows and reviewed extension installation |
+| [Sync for OpenNexus](https://github.com/KiriAky107/Sync-for-OpenNexus) | Optional self-hosted vault synchronization and recovery |
+| [Community for OpenNexus](https://github.com/KiriAky107/Community-for-OpenNexus) | Independent signed package catalog and publication review |
 
-Never reuse MinIO root credentials as runtime credentials. Keep the bucket name stable during upgrades.
+The services are optional and separately deployed. Sync uses `/sync/v1`; Community uses `/catalog/v1`. Product versions and protocol versions are maintained separately.
 
-## Health and operations
+## Health and Operations
 
 - `/health` reports process health.
 - `/ready` verifies database schema, staging writes, and object-store probe operations.
@@ -224,7 +258,7 @@ Never reuse MinIO root credentials as runtime credentials. Keep the bucket name 
 - Production traffic must terminate TLS at a reverse proxy; `Caddyfile.example` is a starting point.
 - Direct exposure through `compose.test.yaml` is only for an authorized isolated demonstration environment.
 
-## Backup and restore
+## Backup and Restore
 
 ```powershell
 python -m sync_server backup --directory D:/OpenNexus-backups/latest --io-workers 8
@@ -255,7 +289,7 @@ flowchart LR
 
 Backup directories contain authentication and session hashes. Protect them with restricted ACLs, encrypted storage, retention rules, and off-host copies. Practice restoration on a separate empty instance.
 
-## Development and tests
+## Development
 
 ```powershell
 uv sync --frozen
@@ -271,7 +305,7 @@ pnpm build
 
 Tests create temporary databases, object directories, and staging directories; they must not read an OpenNexus user Vault or real deployment credentials.
 
-## Security and community
+## Security and Contributing
 
 - Do not commit `.env`, tokens, passwords, dumps, object data, backups, or user Vault content.
 - Restrict database and object-store networks, enable monitoring, and revoke lost devices.
@@ -279,8 +313,6 @@ Tests create temporary databases, object directories, and staging directories; t
 - Report vulnerabilities according to [SECURITY.md](SECURITY.md), not in a public Issue.
 - Contributions follow [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
 - Use the repository Issue forms and Pull Request template; redact infrastructure and account details.
-
-Related repositories: [OpenNexus](https://github.com/KiriAky107/OpenNexus) and [Community for OpenNexus](https://github.com/KiriAky107/Community-for-OpenNexus).
 
 ## License
 

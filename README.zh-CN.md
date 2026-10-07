@@ -1,19 +1,26 @@
-# Sync for OpenNexus
+<div align="center">
 
-**简体中文** | [English](README.md)
+  <img src=".github/assets/opennexus-logo.svg" alt="OpenNexus Logo" width="100" height="100" />
 
-[![版本](https://img.shields.io/badge/version-0.6.0-5865f2)](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0)
-![Python](https://img.shields.io/badge/Python-3.12%2B-3776ab)
-![API](https://img.shields.io/badge/API-FastAPI-05998b)
-![控制台](https://img.shields.io/badge/console-Vue%203-42b883)
-[![许可证](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+  <h1>Sync for OpenNexus</h1>
 
-Sync for OpenNexus 是 OpenNexus 的可选自托管同步服务，管理账户、设备、不可变内容对象、有序文件修订、断点续传、备份及空实例恢复。它不运行桌面 AI Core，也不会直接读取用户本地 Vault。
+  <p><strong>自托管的知识库同步服务</strong></p>
 
-对象服务通过 `Dockerfile.objects` 从 [MinIO 官方安全修复版本](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z) 构建，固定源码提交并检查归档 SHA-256，不再依赖已无法拉取的公共容器镜像，数据仍保存在既有 `/data` 卷。GitHub CI 使用同一构建文件，验证备份、数据库全部行的逐字恢复、对象哈希、恢复后的设备撤销及非空目标拒绝；上传产物只包含脱敏结果。
+  <p>在自己的基础设施上同步 OpenNexus 知识库，保留文件修订，并在需要时恢复数据。</p>
 
-> 生产部署使用 TLS 和访问控制。PostgreSQL 与 S3 兼容对象存储是生产路径；SQLite 和明文 HTTP 仅用于隔离测试。
+  <p>
+    <a href="README.md">English</a> • <a href="#快速开始">快速开始</a> • <a href="#核心亮点">核心亮点</a> • <a href="#系统架构">系统架构</a> • <a href="#本地开发">本地开发</a> • <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases">发布日志</a>
+  </p>
 
+  <p>
+    <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/Version-0.6.0-5865f2?style=flat-square" alt="版本" /></a> <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml"><img src="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <img src="https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square" alt="Python 3.12+" /> <img src="https://img.shields.io/badge/API-FastAPI-05998b?style=flat-square" alt="FastAPI" /> <img src="https://img.shields.io/badge/Console-Vue_3-42b883?style=flat-square" alt="Vue 3" /> <img src="https://img.shields.io/badge/Metadata-PostgreSQL-4169e1?style=flat-square" alt="PostgreSQL" /> <img src="https://img.shields.io/badge/Objects-S3_compatible-f97316?style=flat-square" alt="S3-compatible storage" /> <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
+  </p>
+
+</div>
+
+---
+
+当前版本： [v0.6.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0)。
 
 ## 0.6.0 更新
 
@@ -23,19 +30,57 @@ Sync for OpenNexus 是 OpenNexus 的可选自托管同步服务，管理账户�
 - PostgreSQL 与 S3 部署提供完整备份校验和空目标恢复，逐字核对数据库、对象和设备撤销状态。
 - GitHub CI 验证协议、控制台及部署包，发布固定源码、部署归档和 SHA-256 清单。
 
-配套版本：OpenNexus **0.6.0**、Sync for OpenNexus **0.6.0**、Community for OpenNexus **0.6.0**。Sync 使用 `/sync/v1`，Community 使用 `/catalog/v1`；产品版本与协议版本分别维护。
+## 核心亮点
 
-## 主要能力
+- **设备与会话**：桌面客户端使用 Access/Refresh 会话接入，可在控制台撤销遗失设备。
+- **可移植知识库文件**：笔记、附件、实验源码与输入通过稳定文件身份和规范相对路径传输。
+- **断点续传**：从已确认的分块偏移继续上传，完成后先校验长度和 SHA-256，再提交文件修订。
+- **保留历史**：保存有序修订和不可变对象，以基础修订检查发现并发编辑，避免静默替换内容。
+- **用量与隔离**：各账户的知识库分别管理，配额按对象账目和上传预留空间执行。
+- **恢复与运维**：校验备份、恢复到空实例，并通过 CLI 或同源 Vue 控制台查看持久操作记录。
 
-- Access/Refresh 会话和设备撤销。
-- 用户级 Vault 隔离、配额和有序修订流。
-- 校验偏移、长度、SHA-256 和幂等完成回执的分块上传。
-- PostgreSQL 元数据与不可变对象存储分离。
-- 供桌面 Outbox/Inbox 客户端使用的基础修订与冲突检测。
-- Repeatable-read 备份和只面向空部署的验证恢复。
-- 同源 Vue 控制台，用于健康状态、账户、Vault 和设备管理。
+## 快速开始
 
-服务不执行模型、不索引 Markdown、不安装扩展，也不接收 OpenNexus 模型提供商凭据，更不会复用 Community Token。
+使用 TLS 反向代理、PostgreSQL 元数据和 S3 兼容对象存储部署。Compose 默认将 API 绑定到 `127.0.0.1:8080`。
+
+```powershell
+Copy-Item .env.example .env
+# 为所有空白密钥生成彼此独立的值并编辑 .env
+docker compose up -d --build
+docker compose ps
+docker compose logs sync
+```
+
+全新数据库会生成临时 `admin`，并向 Sync 容器日志写入 `SYNC_BOOTSTRAP_CREDENTIALS`。首次登录后必须立即修改用户名和密码；在固定凭据前，每次重启都会轮换临时密码并撤销旧会话。
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `POSTGRES_PASSWORD` | PostgreSQL 容器密码 |
+| `SYNC_DATABASE_URL` | 密码经过 URL 编码的 PostgreSQL SQLAlchemy URL |
+| `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD` | 仅供初始化任务管理对象存储 |
+| `SYNC_ACCESS_KEY_ID`、`SYNC_SECRET_ACCESS_KEY` | Bucket 级运行身份 |
+| `SYNC_S3_BUCKET` | 已有或初始化的对象 Bucket |
+| `SYNC_BIND_ADDRESS`、`SYNC_PORT` | 宿主监听地址与端口 |
+
+不得复用 MinIO Root 凭据作为运行时凭据，升级时必须保持 Bucket 名称一致。
+
+通过反向代理访问 `/console/`，登录后固定初始凭据并创建远端知识库。SQLite 和明文 HTTP 测试实例用于隔离验收。
+
+## 核心工作流
+
+### 1. 连接并同步知识库
+
+1. 登录控制台并创建远端知识库，配置其他设备时使用同一知识库身份。
+2. 在 OpenNexus 中配置 Sync 服务地址、账户和远端知识库。每台设备使用独立会话，模型提供商凭据与 Sync 凭据分别管理。
+3. 执行同步、查看进度，并在选择保留内容前审核冲突。文件改名保留稳定身份，服务不会执行上传的文件。
+
+### 2. 管理设备访问
+
+在控制台设备列表中撤销选定会话，该设备的下一次认证请求即会失败。知识库文件与历史修订仍供其他授权设备访问。
+
+### 3. 恢复前校验备份
+
+先创建备份、运行 `verify-backup` 并核对保存的回执。仅向空数据库和空对象桶恢复，之后检查 `/ready`，再连接测试设备。命令和未知结果处理见[备份与恢复](#备份与恢复)。
 
 ## 系统架构
 
@@ -54,6 +99,8 @@ flowchart LR
 ```
 
 `compose.yaml` 默认只绑定 `127.0.0.1:8080`，使用幂等初始化任务、只读服务文件系统、删除 Linux Capabilities，并让长期运行服务使用 Bucket 级凭据而非 MinIO Root 凭据。
+
+对象服务通过 `Dockerfile.objects` 从 [MinIO 官方安全修复版本](https://github.com/minio/minio/releases/tag/RELEASE.2025-10-15T17-29-55Z) 构建，固定源码提交并检查归档 SHA-256，不依赖已无法拉取的公共容器镜像，数据仍保存在既有 `/data` 卷。GitHub CI 使用同一构建文件，验证备份、数据库全部行的逐字恢复、对象哈希、恢复后的设备撤销及非空目标拒绝；上传产物只包含脱敏结果。
 
 ## 同步协议流程
 
@@ -93,35 +140,92 @@ sequenceDiagram
 
 ```mermaid
 erDiagram
-    USERS ||--o{ DEVICES : 拥有
-    DEVICES ||--o{ SESSIONS : 认证
-    USERS ||--o{ VAULTS : 拥有
-    VAULTS ||--o{ UPLOADS : 暂存
-    DEVICES ||--o{ UPLOADS : 创建
-    VAULTS ||--o{ OBJECTS : 保存
-    VAULTS ||--o{ REVISIONS : 追加
-    DEVICES ||--o{ REVISIONS : 提交
-    VAULTS ||--o{ FILES : 跟踪
-    UPLOADS ||--o| UPLOAD_RECEIPTS : 完成
+    USERS ||--o{ DEVICES : owns
+    DEVICES ||--o{ SESSIONS : authenticates
+    USERS ||--o{ VAULTS : owns
+    VAULTS ||--o{ UPLOADS : stages
+    DEVICES ||--o{ UPLOADS : creates
+    VAULTS ||--o{ OBJECTS : stores
+    VAULTS ||--o{ REVISIONS : appends
+    DEVICES ||--o{ REVISIONS : submits
+    VAULTS ||--o{ FILES : tracks
+    UPLOADS ||--o| UPLOAD_RECEIPTS : completes_as
 
-    USERS { string id PK string username UK string password_hash }
-    DEVICES { string id PK string user_id FK string name bool revoked }
-    SESSIONS { string token PK string refresh UK string device_id FK int expires int refresh_expires }
-    VAULTS { string id PK string user_id FK string name int sequence int quota int used }
-    UPLOADS { string id PK string vault_id FK string device_id FK string hash int size int offset_bytes int expires }
-    OBJECTS { string vault_id PK, FK string hash PK int size int created }
-    REVISIONS { string vault_id PK, FK int sequence PK string file_id int base_revision string path string operation string hash string device_id FK string operation_id UK }
-    FILES { string vault_id PK, FK string file_id PK int sequence string path_key bool deleted }
-    UPLOAD_RECEIPTS { string id PK string vault_id FK string device_id FK string hash int completed }
+    USERS {
+        string id PK
+        string username UK
+        string password_hash
+    }
+    DEVICES {
+        string id PK
+        string user_id FK
+        string name
+        bool revoked
+    }
+    SESSIONS {
+        string token PK
+        string refresh UK
+        string device_id FK
+        int expires
+        int refresh_expires
+    }
+    VAULTS {
+        string id PK
+        string user_id FK
+        string name
+        int sequence
+        int quota
+        int used
+    }
+    UPLOADS {
+        string id PK
+        string vault_id FK
+        string device_id FK
+        string hash
+        int size
+        int offset_bytes
+        int expires
+    }
+    OBJECTS {
+        string vault_id PK, FK
+        string hash PK
+        int size
+        int created
+    }
+    REVISIONS {
+        string vault_id PK, FK
+        int sequence PK
+        string file_id
+        int base_revision
+        string path
+        string operation
+        string hash
+        string device_id FK
+        string operation_id UK
+    }
+    FILES {
+        string vault_id PK, FK
+        string file_id PK
+        int sequence
+        string path_key
+        bool deleted
+    }
+    UPLOAD_RECEIPTS {
+        string id PK
+        string vault_id FK
+        string device_id FK
+        string hash
+        int completed
+    }
 ```
 
-Schema 还包含 `schema_version`、`login_limits` 和 `bootstrap_state`。对象内容位于 S3，PostgreSQL 是所有权、修订顺序、配额、回执和对象目录的权威来源。
+Schema 还包含 `schema_version`、`login_limits`、`bootstrap_state` 和 `revision_annotations`。附加记录保存已知修订时间与恢复来源；旧修订缺少这些证据时，时间保持未知。对象内容位于 S3，PostgreSQL 是所有权、修订顺序、配额、回执和对象目录的权威来源。
 
 ### 不透明文件内容与实验文件兼容
 
 握手声明 `encryption: transport-only`。部署时使用 HTTPS / TLS；服务仍可读取对象内容及文件路径，传输加密不是端到端加密。新增的 `features` 声明标识已有的 SHA-256 对象、稳定文件身份、规范路径和已确认偏移续传契约。同步不会执行接收的文件；只使用原有 v1 字段的客户端可以继续忽略此声明。
 
-Sync API v1 将上传内容视为不透明字节，只校验规范相对路径、内容摘要、对象大小和修订所有权，不解析或执行文件。OpenNexus 桌面客户端可沿用现有修订与对象协议同步知识库根目录 `experiments/` 下的 `.py` 源码以及 `.json`、`.csv` 输入数据，无需数据库迁移或新增 API 版本。桌面端负责限制哪些本地文件类型进入同步；不认识这些扩展名的旧客户端会忽略它们，不会运行文件。
+Sync API v1 将对象内容作为不透明字节传输，校验规范相对路径、内容摘要、对象大小和修订所有权。历史预览另外解码大小受限的文本和图片，服务始终不执行文件。OpenNexus 桌面客户端可沿用现有修订与对象协议同步知识库根目录 `experiments/` 下的 `.py` 源码以及 `.json`、`.csv` 输入数据，无需新增 API 版本。桌面端负责限制哪些本地文件类型进入同步；不认识这些扩展名的旧客户端会忽略它们，不会运行文件。
 
 ## 仓库结构
 
@@ -134,28 +238,15 @@ Sync API v1 将上传内容视为不透明字节，只校验规范相对路径�
 | `compose.yaml` | PostgreSQL、MinIO、初始化任务和加固服务 |
 | `compose.test.yaml` | 显式隔离测试覆盖配置 |
 
-## 快速部署
+## 生态项目
 
-```powershell
-Copy-Item .env.example .env
-# 为所有空白密钥生成彼此独立的值并编辑 .env
-docker compose up -d --build
-docker compose ps
-docker compose logs sync
-```
-
-全新数据库会生成临时 `admin`，并向 Sync 容器日志写入 `SYNC_BOOTSTRAP_CREDENTIALS`。首次登录后必须立即修改用户名和密码；在固定凭据前，每次重启都会轮换临时密码并撤销旧会话。
-
-| 环境变量 | 用途 |
+| 仓库 | 职责 |
 | --- | --- |
-| `POSTGRES_PASSWORD` | PostgreSQL 容器密码 |
-| `SYNC_DATABASE_URL` | 密码经过 URL 编码的 PostgreSQL SQLAlchemy URL |
-| `MINIO_ROOT_USER`、`MINIO_ROOT_PASSWORD` | 仅供初始化任务管理对象存储 |
-| `SYNC_ACCESS_KEY_ID`、`SYNC_SECRET_ACCESS_KEY` | Bucket 级运行身份 |
-| `SYNC_S3_BUCKET` | 已有或初始化的对象 Bucket |
-| `SYNC_BIND_ADDRESS`、`SYNC_PORT` | 宿主监听地址与端口 |
+| [OpenNexus](https://github.com/KiriAky107/OpenNexus) | 本地知识库编辑、AI 工作流与经过审核的扩展安装 |
+| [Sync for OpenNexus](https://github.com/KiriAky107/Sync-for-OpenNexus) | 可选的自托管知识库同步与恢复 |
+| [Community for OpenNexus](https://github.com/KiriAky107/Community-for-OpenNexus) | 独立签名扩展目录与发布审核 |
 
-不得复用 MinIO Root 凭据作为运行时凭据，升级时必须保持 Bucket 名称一致。
+服务按需启用、分别部署。Sync 使用 `/sync/v1`，Community 使用 `/catalog/v1`；产品版本和协议版本分别维护。
 
 ## 健康与运维
 
@@ -165,7 +256,7 @@ docker compose logs sync
 - 生产流量必须在反向代理终止 TLS；可参考 `Caddyfile.example`。
 - `compose.test.yaml` 直接暴露端口的方式仅用于已授权隔离演示。
 
-## 备份与空实例恢复
+## 备份与恢复
 
 ```powershell
 python -m sync_server backup --directory D:/OpenNexus-backups/latest --io-workers 8
@@ -196,7 +287,7 @@ flowchart LR
 
 备份包含认证和会话哈希，必须使用受限 ACL、加密存储、保留规则和异机副本保护，并定期在独立空实例演练恢复。
 
-## 开发与测试
+## 本地开发
 
 ```powershell
 uv sync --frozen
@@ -212,7 +303,7 @@ pnpm build
 
 测试只能使用临时数据库、对象目录和暂存目录，不得读取 OpenNexus 用户 Vault 或真实部署凭据。
 
-## 安全与社区
+## 安全与参与贡献
 
 - 不得提交 `.env`、Token、密码、数据库、对象内容、备份或用户 Vault。
 - 限制数据库和对象存储网络，启用监控，并及时撤销遗失设备。
@@ -221,8 +312,6 @@ pnpm build
 - 贡献遵循[贡献指南](CONTRIBUTING.md)和[社区行为准则](CODE_OF_CONDUCT.md)。
 - 使用仓库 Issue 表单和 PR 模板，并对基础设施与账户信息脱敏。
 
-相关仓库：[OpenNexus](https://github.com/KiriAky107/OpenNexus) 与 [Community for OpenNexus](https://github.com/KiriAky107/Community-for-OpenNexus)。
-
-## 许可证
+## 开源协议
 
 本项目采用 [MIT License](LICENSE)，第三方组件继续适用各自的许可证与声明。
