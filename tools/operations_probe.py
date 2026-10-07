@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import uuid
 
 from fastapi.testclient import TestClient
+from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
@@ -125,6 +126,102 @@ def served_protocol(repo, work, journal, url, endpoint, bucket, base, auth, expe
     return {'owned_server_stopped': child.poll() is not None, 'exit_code': child.returncode}
 
 
+def administration_seed(db, objects, work):
+    """Provision using the actual operator API before the verified snapshot."""
+    with db.engine.connect() as conn:
+        operator = conn.execute(text("SELECT id FROM users WHERE username='probe-owner'")).scalar_one()
+    app = create_app(db, objects, work/'admin-staging', operator_user_ids=[operator])
+    writes = []
+    @app.middleware('http')
+    async def lose_creation_reply(request, call_next):
+        response = await call_next(request)
+        if request.method == 'POST' and request.url.path == '/sync/v1/admin/accounts':
+            writes.append(request.url.path)
+            if response.status_code == 200:
+                return JSONResponse({'error':{'code':'CONTROLLED_LOST_REPLY'}}, status_code=503)
+        return response
+    with TestClient(app) as client:
+        session = checked(client, 'POST', '/sync/v1/auth/sessions', json={
+            'username':'probe-owner', 'password':'controlled-probe-password', 'device_name':'provisioning'})
+        auth = {'Authorization':'Bearer '+session['access_token']}
+        operation = uuid.uuid4().hex
+        checked(client, 'POST', '/sync/v1/admin/accounts', headers=auth, status=503, json={
+            'operation_id':operation, 'username':'provisioned-member',
+            'password':'controlled-provisioned-password', 'default_quota':64})
+        created = checked(client, 'GET', '/sync/v1/admin/operations/'+operation, headers=auth)
+        if created['state'] != 'completed' or created['default_quota'] != 64 or len(writes) != 1:
+            raise ProbeFailure('PROVISIONING_RECONCILIATION_FAILED')
+        member = created['user_id']
+        sessions = [checked(client, 'POST', '/sync/v1/auth/sessions', json={
+            'username':'provisioned-member', 'password':'controlled-provisioned-password', 'device_name':'member-'+str(i)
+        }) for i in range(2)]
+        access = {'Authorization':'Bearer '+sessions[0]['access_token']}
+        checked(client, 'GET', '/sync/v1/admin/accounts', headers=access, status=403)
+        vault = checked(client, 'POST', '/sync/v1/vaults', headers=access, json={'name':'Provisioned vault'})['vault_id']
+        current = checked(client, 'GET', '/sync/v1/admin/accounts/'+member, headers=auth)
+        policy = checked(client, 'PUT', '/sync/v1/admin/accounts/'+member+'/policy', headers=auth,
+                         json={'operation_id':uuid.uuid4().hex,'expected_revision':current['policy']['revision'],'quota':96})
+        second = checked(client, 'POST', '/sync/v1/vaults', headers=access, json={'name':'Future policy vault'})['vault_id']
+        base = '/sync/v1/vaults/'+vault
+        pending = checked(client, 'POST', base+'/uploads', headers=access,
+                          json={'content_hash':'f'*64,'size':20})['upload_id']
+        target = '/sync/v1/admin/accounts/'+member+'/vaults/'+vault+'/quota'
+        refusal = checked(client, 'PUT', target, headers=auth, status=409,
+                          json={'operation_id':uuid.uuid4().hex,'expected_quota':64,'quota':19})
+        if refusal['error']['code'] != 'QUOTA_IN_USE' or refusal['error']['details']['reserved_bytes'] != 20:
+            raise ProbeFailure('PROVISIONED_RESERVATION_NOT_PROTECTED')
+        quota = checked(client, 'PUT', target, headers=auth,
+                        json={'operation_id':uuid.uuid4().hex,'expected_quota':64,'quota':20})
+        checked(client, 'POST', base+'/uploads/'+pending+'/cancel', headers=access)
+        revoked = checked(client, 'POST', '/sync/v1/admin/accounts/'+member+'/devices/'+sessions[1]['device_id']+'/revoke',
+                          headers=auth, json={'operation_id':uuid.uuid4().hex})
+        first = checked(client, 'GET', '/sync/v1/admin/diagnostics', headers=auth)['dependencies']
+        cache = checked(client, 'GET', '/sync/v1/admin/diagnostics', headers=auth)['dependencies']
+        if not first['ready'] or cache['code'] != 'READY' or not cache['cached'] or cache['checked_at'] != first['checked_at']:
+            raise ProbeFailure('DIAGNOSTIC_OBSERVATION_CHANGED')
+    return {'operator':operator, 'member':member, 'sessions':sessions, 'vault':vault, 'future_vault':second,
+            'receipts':[created,policy,quota,revoked]}
+
+
+def administration_restored(db, objects, work, original):
+    """Check restored policies/receipts/revocation, then sync fresh actual bytes."""
+    app = create_app(db, objects, work/'restored-admin-staging', operator_user_ids=[original['operator']])
+    with TestClient(app) as client:
+        operator = checked(client, 'POST', '/sync/v1/auth/sessions', json={
+            'username':'probe-owner', 'password':'controlled-probe-password', 'device_name':'restored-provisioning'})
+        auth = {'Authorization':'Bearer '+operator['access_token']}
+        for receipt in original['receipts']:
+            if checked(client, 'GET', '/sync/v1/admin/operations/'+receipt['operation_id'], headers=auth) != receipt:
+                raise ProbeFailure('RESTORED_ADMIN_RECEIPT_CHANGED')
+        details = checked(client, 'GET', '/sync/v1/admin/accounts/'+original['member'], headers=auth)
+        quotas = {item['id']:item['quota'] for item in details['vaults']}
+        if details['policy']['default_quota'] != 96 or quotas != {original['vault']:20,original['future_vault']:96}:
+            raise ProbeFailure('RESTORED_QUOTA_POLICY_CHANGED')
+        revoked = original['sessions'][1]
+        checked(client, 'GET', '/sync/v1/vaults', headers={'Authorization':'Bearer '+revoked['access_token']}, status=401)
+        checked(client, 'POST', '/sync/v1/auth/refresh', json={'refresh_token':revoked['refresh_token']}, status=401)
+        active = {'Authorization':'Bearer '+original['sessions'][0]['access_token']}
+        checked(client, 'GET', '/sync/v1/admin/diagnostics', headers=active, status=403)
+        base = '/sync/v1/vaults/'+original['vault']; content = b'restored sync bytes'
+        sha = hashlib.sha256(content).hexdigest()
+        upload = checked(client, 'POST', base+'/uploads', headers=active, json={'content_hash':sha,'size':len(content)})['upload_id']
+        checked(client, 'PUT', base+'/uploads/'+upload+'?offset=0', headers=active, content=content)
+        checked(client, 'POST', base+'/uploads/'+upload+'/complete', headers=active)
+        file = uuid.uuid4().hex
+        revision = checked(client, 'POST', base+'/revisions', headers=active, json={
+            'operation_id':uuid.uuid4().hex,'file_id':file,'base_revision':0,'path':'restored.md','operation':'put','content_hash':sha,'size':len(content)})
+        other = checked(client, 'POST', '/sync/v1/auth/sessions', json={
+            'username':'provisioned-member','password':'controlled-provisioned-password','device_name':'new-restored-device'})
+        second = {'Authorization':'Bearer '+other['access_token']}
+        changes = checked(client, 'GET', base+'/changes', headers=second)
+        downloaded = client.get(base+'/objects/'+sha, headers=second)
+        if revision['sequence'] != 1 or changes['items'][0]['file_id'] != file or downloaded.status_code != 200 or downloaded.content != content:
+            raise ProbeFailure('PROVISIONED_POST_RESTORE_SYNC_FAILED')
+    return {'restored_receipts':len(original['receipts']),'restored_default_quota':96,
+            'restored_vault_quota':20,'post_restore_bytes':len(content),'post_restore_sha256':sha,
+            'two_device_sync':True,'revoked_access_and_refresh_rejected':True,'ordinary_admin_access_rejected':True}
+
+
 def probe(work: Path):
     url, endpoint = configuration(os.environ)
     work = work.resolve()
@@ -176,6 +273,9 @@ def probe(work: Path):
         source.migrate()
         source.add_user('probe-owner', 'controlled-probe-password')
         source.add_user('probe-other', 'controlled-probe-password')
+        stage = 'operator_provisioning'
+        administration = administration_seed(source, original_objects, work)
+        report['checks'].append('operator_provisioning_quota_reservations_and_readonly_reconciliation')
         files = [
             ('experiments/课程#1%2F.py', 'print("中文")\r\n'.encode()),
             ('experiments/输入.json', '{"课程":"数据","值":7}\r\n'.encode()),
@@ -251,6 +351,10 @@ def probe(work: Path):
         stage = 'actual_production_http_entrypoint'
         report['served_protocol'] = served_protocol(repo, work, journal, restored_url, endpoint, restored_objects.bucket, base, auth, ids)
         report['checks'].append('actual_production_serve_readiness_handshake_and_restored_identity')
+
+        stage = 'restored_management_and_fresh_sync'
+        report['administration'] = administration_restored(restored, restored_objects, work, administration)
+        report['checks'].append('restored_account_policies_receipts_revocation_and_fresh_two_device_sync')
 
         stage = 'protected_reclamation_with_real_providers'
         gc_backup = protected_reclamation(repo, work, journal, source, original_objects,

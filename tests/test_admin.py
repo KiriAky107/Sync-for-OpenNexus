@@ -106,6 +106,9 @@ def test_quota_changes_preserve_charged_objects_and_full_upload_reservations(adm
     assert client.put(base+'/uploads/'+uploaded+'?offset=0',headers=member,content=content).status_code == 200
     assert client.post(base+'/uploads/'+uploaded+'/complete',headers=member).status_code == 200
     pending=client.post(base+'/uploads',headers=member,json={'content_hash':'f'*64,'size':14}).json()['upload_id']
+    overview=client.get('/sync/v1/admin/accounts/'+ids['member'],headers=auth).json()
+    resource=next(item for item in overview['vaults'] if item['id']==vault)
+    assert resource['used'] == 10 and resource['reserved_bytes'] == 14
     endpoint='/sync/v1/admin/accounts/'+ids['member']+'/vaults/'+vault+'/quota'
     refused=client.put(endpoint,headers=auth,json=operation(expected_quota=1024**3,quota=23))
     assert refused.json()['error']['code'] == 'QUOTA_IN_USE'

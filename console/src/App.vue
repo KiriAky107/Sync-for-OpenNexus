@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { SyncApi, type Device, type ServiceStatus, type Vault, type OperationsPage, type OperationReceipt } from './api'
 import VaultHistory from './VaultHistory.vue'
 import VaultStorage from './VaultStorage.vue'
+import AdminPanel from './AdminPanel.vue'
 
 const api = new SyncApi()
 const service = reactive<ServiceStatus>({ health: false, ready: false, protocol: 1, maxObjectSize: 100 * 1024 * 1024 })
@@ -11,6 +12,10 @@ const signedIn = ref(false)
 const busy = ref(false)
 const historyPending = ref(false)
 const storagePending = ref(false)
+const adminPending = ref(false)
+const operatorRole = ref(false)
+const roleError = ref('')
+const activeView = ref<'workspace' | 'admin'>('workspace')
 const username = ref('')
 const password = ref('')
 const deviceName = ref('OpenNexus Web Console')
@@ -28,6 +33,7 @@ const operationsBusy = ref(false)
 const operationsError = ref('')
 const operationsCheckedAt = ref('')
 let operationsVersion = 0
+let accountVersion = 0
 const toast = ref('')
 const toastError = ref(false)
 let toastTimer: number | undefined
@@ -63,10 +69,22 @@ async function refreshStatus() {
 }
 
 async function loadAccount() {
+  const version = ++accountVersion
   const [vaultPayload, devicePayload] = await Promise.all([api.vaults(), api.devices()])
+  if (version !== accountVersion || !signedIn.value) return
   vaults.value = vaultPayload.items
   devices.value = devicePayload.items
-  await refreshOperations()
+  try {
+    await api.operatorAccess()
+    if (version !== accountVersion || !signedIn.value) return
+    operatorRole.value = true; roleError.value = ''
+    await refreshOperations()
+  } catch (error) {
+    if (version !== accountVersion) return
+    if (!api.signedIn) { leaveConsole(); return }
+    operatorRole.value = false; activeView.value = 'workspace'; operations.value = null
+    roleError.value = error instanceof Error && error.message === 'OPERATIONS_FORBIDDEN' ? '' : '管理权限尚未确认，请刷新账户数据。'
+  }
 }
 
 function operationName(kind: OperationReceipt['kind']) {
@@ -125,6 +143,7 @@ async function refreshAccount() {
 }
 
 function leaveConsole() {
+  accountVersion++
   operationsVersion++
   operations.value = null
   operationsBusy.value = false
@@ -139,7 +158,10 @@ function leaveConsole() {
   currentPassword.value = ''
   newPassword.value = ''
   confirmPassword.value = ''
+  operatorRole.value = false; roleError.value = ''; activeView.value = 'workspace'; adminPending.value = false
 }
+
+function leaveAdmin() { operatorRole.value = false; activeView.value = 'workspace'; operations.value = null; notify('管理员权限已不可用，请核对授权配置。', true) }
 
 async function signIn() {
   if (busy.value) return
@@ -216,7 +238,7 @@ async function revokeDevice(device: Device) {
 }
 
 async function logout() {
-  if (busy.value) return
+  if (busy.value || historyPending.value || storagePending.value || adminPending.value) return
   busy.value = true
   try { await api.logout() }
   finally {
@@ -286,7 +308,7 @@ onBeforeUnmount(() => {
     <section v-else class="console-view">
       <div class="console-heading">
         <div><div class="eyebrow"><span /> Connected workspace</div><h1>同步空间</h1><p>{{ sessionLabel }}</p></div>
-        <button class="secondary-button" type="button" :disabled="busy || historyPending || storagePending" @click="logout">退出登录</button>
+        <button class="secondary-button" type="button" :disabled="busy || historyPending || storagePending || adminPending" @click="logout">退出登录</button>
       </div>
 
       <section v-if="credentialsRequired" class="login-card credential-card" aria-labelledby="credential-title">
@@ -305,6 +327,9 @@ onBeforeUnmount(() => {
       </section>
 
       <template v-else>
+      <nav v-if="operatorRole" class="workspace-switch" aria-label="工作区域"><button :aria-pressed="activeView === 'workspace'" :disabled="busy || historyPending || storagePending || adminPending" @click="activeView = 'workspace'">我的知识库</button><button :aria-pressed="activeView === 'admin'" :disabled="busy || historyPending || storagePending || adminPending" @click="activeView = 'admin'">服务管理</button></nav>
+      <p v-if="roleError" class="operations-error" role="alert">{{ roleError }}</p>
+      <div v-if="activeView === 'workspace'">
       <div class="metric-grid">
         <article><span>远端 Vault</span><strong>{{ vaults.length }}</strong><small>当前账户可访问</small></article>
         <article><span>已使用空间</span><strong>{{ formatBytes(used) }}</strong><small>总配额 {{ formatBytes(quota) }}</small></article>
@@ -351,7 +376,9 @@ onBeforeUnmount(() => {
       </div>
       <VaultHistory :api="api" :vaults="vaults" @refreshed="refreshAccount" @expired="leaveConsole" @pending="historyPending = $event" />
       <VaultStorage :api="api" :vaults="vaults" @refreshed="refreshAccount" @expired="leaveConsole" @pending="storagePending = $event" />
-      <section class="surface operations-surface" aria-labelledby="operations-title">
+      </div>
+      <AdminPanel v-if="operatorRole && activeView === 'admin'" :api="api" @pending="adminPending = $event" @expired="leaveConsole" @forbidden="leaveAdmin" @refreshed="refreshAccount" />
+      <section v-if="operatorRole && activeView === 'admin'" class="surface operations-surface" aria-labelledby="operations-title">
         <div class="surface-heading">
           <div><p>Operations</p><h2 id="operations-title">备份与恢复记录</h2></div>
           <button class="secondary-button" type="button" :disabled="operationsBusy" @click="refreshOperations()">{{ operationsBusy ? '正在读取…' : '刷新运维记录' }}</button>

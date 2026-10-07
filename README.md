@@ -116,7 +116,14 @@ If an old completed upload's unreferenced object was reclaimed, its result becom
 
 ### 7. Provision accounts and review service diagnostics
 
-Fix the initial credentials, resolve an operator's stable account ID with `operator-id`, and configure `SYNC_OPERATOR_USER_IDS` as described in [Backup and Restore](#backup-and-restore). Authorized device sessions can use the administration API; an account named `admin` has no implied role. The authorizing device remains subject to expiry and revocation.
+Fix the initial credentials, resolve an operator's stable account ID with `operator-id`, and configure `SYNC_OPERATOR_USER_IDS` as described in [Backup and Restore](#backup-and-restore). Sign in again to see **My vaults / Service management**. An account named `admin` has no implied role; the authorizing device remains subject to expiry and revocation.
+
+1. In **Service management**, choose **Create account**, enter the account and initial password, set its default quota, then review and confirm. Password fields are cleared before the request; the console never persists passwords or tokens.
+2. Select an account to page through its vaults and devices. Adjust a vault's quota or revoke a device after reviewing the fixed account and resource. Default quota changes affect future vaults.
+3. If the response is interrupted, choose **Query original result**. Retry with the original operation ID only after the server reports no receipt. The reviewed action stays fixed during reconciliation.
+4. Read classified dependency failures, accounting counts and cleanup results under **Service diagnostics**. Probe observation times and cache labels distinguish a recent read from a cached probe. Backup and recovery receipts appear below the deployment guide.
+
+The console uses these same API routes:
 
 | Task | API |
 | --- | --- |
@@ -131,7 +138,7 @@ Fix the initial credentials, resolve an operator's stable account ID with `opera
 
 Use a new 32-character lowercase hexadecimal operation ID for each reviewed action. If a response is lost, read that original ID first; a completed result never changes later passwords or quota settings. Creation does not return the password, and receipts retain no plaintext password. Defaults apply to new vaults; existing accounts retain the deployment default until explicitly configured. A vault's new quota cannot be below its charged objects plus active upload reservations.
 
-Accounts and per-account resources use `limit` and stable ID cursors. Account lists return `next_before`; details return `vaults_next_before` and `devices_next_before`, supplied as `vault_before` or `device_before` on subsequent reads. Diagnostics identify database, staging, object-store, integrity and timeout failures with fixed codes, probe observation times and a cache flag. A still-running probe is reused after timeout. Ordinary accounts cannot read these administration resources. These operations are currently available through the API.
+Accounts and per-account resources use `limit` and stable ID cursors. Account lists return `next_before`; details return `vaults_next_before` and `devices_next_before`, supplied as `vault_before` or `device_before` on subsequent reads. Diagnostics identify database, staging, object-store, integrity and timeout failures with fixed codes, probe observation times and a cache flag. A still-running probe is reused after timeout. Ordinary accounts cannot read these administration resources.
 
 ## Architecture
 
@@ -318,7 +325,9 @@ python -m sync_server operation-records --limit 20
 
 `verify-backup` checks the database snapshot, every object, and the same age policy used by restore without connecting to PostgreSQL or S3. `--max-age-hours` defaults to 24. Backup, verification, and restore save an operation intent before work and a durable result afterward in `SYNC_OPERATIONS_PATH`. Container deployments persist this journal in the `operations` volume; standalone operators should set a durable journal path. Records expose only operation IDs, times, fixed error codes, and counts. An unfinished record means a completion receipt was not saved; check the original process and target data before retrying.
 
-To permit an account to view these records in the console, run `python -m sync_server operator-id --username <fixed-account-name>`, put its stable `user_id` in the comma-separated `SYNC_OPERATOR_USER_IDS` deployment setting, and restart the service. Account name changes preserve access; device revocation and session expiry still apply. Access defaults to disabled. The console provides paged, read-only records and dependency failure feedback. `operation-records --before <next_before>` reads older entries from the CLI. Recovery continues to require an empty database and object bucket.
+To permit an account to administer the service and view these records, run `python -m sync_server operator-id --username <fixed-account-name>`, put its stable `user_id` in the comma-separated `SYNC_OPERATOR_USER_IDS` deployment setting, and restart the service. Account name changes preserve access; device revocation and session expiry still apply. Access defaults to disabled. **Service management** provides paged, read-only recovery records and dependency failure feedback alongside account administration. `operation-records --before <next_before>` reads older entries from the CLI. Recovery continues to require an empty database and object bucket.
+
+Before upgrading, finish or cancel pending uploads, create a fresh backup in a new directory, run `verify-backup`, and check its completed receipt. Retain the existing database, object bucket and operations journal when replacing the service. For recovery, select a separate empty database and bucket in the target configuration, run `restore`, then check `/ready`. Connect two isolated clients, sync a new file and verify its bytes on the second device before selecting the recovered instance for use. Account policies and immutable administration receipts are included in new backups; older backups without these additive tables remain restorable.
 
 ```mermaid
 flowchart LR

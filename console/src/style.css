@@ -24,6 +24,54 @@
 }
 
 .storage-surface { margin-top: 24px; }
+.workspace-switch { display: flex; gap: 8px; margin-bottom: 24px; }
+.workspace-switch button { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); padding: 12px 18px; cursor: pointer; }
+.workspace-switch button[aria-pressed=true] { color: var(--accent); background: var(--accent-soft); border-color: var(--purple); }
+.admin-accounts, .admin-guide { margin-top: 24px; }
+.admin-layout { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(0, 2fr); gap: 25px; }
+.admin-heading-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-resource-list { max-height: 440px; overflow: auto; padding-right: 6px; }
+.admin-directory, .admin-resources, .admin-account-heading > div, .admin-resource > div { min-width: 0; }
+.admin-directory h3, .admin-resources h3, .admin-create h3, .admin-review h3 { font-size: 15px; margin: 12px 0; }
+.admin-account-button { display: grid; gap: 5px; width: 100%; padding: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); text-align: left; cursor: pointer; margin: 8px 0; }
+.admin-account-button strong { font-size: 13px; overflow-wrap: anywhere; }
+.admin-account-button small { font-size: 10px; color: var(--muted); overflow-wrap: anywhere; }
+.admin-account-button.selected { border-color: var(--purple); background: var(--accent-soft); }
+.admin-account-heading, .admin-default, .admin-resource { display: flex; gap: 15px; justify-content: space-between; align-items: center; }
+.admin-account-heading code, .admin-resource small { font-size: 10px; color: var(--muted); overflow-wrap: anywhere; }
+.admin-resource { border-top: 1px solid var(--line); padding: 15px 0; }
+.admin-resource strong, .admin-resource small { display: block; }
+.admin-resource strong { overflow-wrap: anywhere; font-size: 13px; }
+.admin-resource p { color: var(--muted); font-size: 11px; line-height: 1.7; }
+.admin-resource > button { flex: 0 0 auto; }
+.admin-default { padding: 15px; background: var(--surface-strong); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
+.admin-default strong { display: block; margin-top: 5px; }
+.admin-pagination { display: flex; gap: 8px; align-items: center; justify-content: center; margin: 15px 0 25px; font-size: 12px; }
+.admin-pagination button { padding: 8px 10px; }
+.admin-create, .admin-review { padding: 20px; margin-top: 20px; background: var(--surface-strong); border: 1px solid var(--line); border-radius: 10px; }
+.admin-create fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.admin-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
+.admin-quota { display: flex; gap: 8px; }
+.admin-quota input { min-width: 0; flex: 1; }
+.admin-quota select { padding: 10px; font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.admin-review p { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.admin-review code { font-size: 11px; overflow-wrap: anywhere; }
+.admin-review > button { margin: 4px 8px 4px 0; }
+.admin-review > label { max-width: 450px; margin: 16px 0; }
+.admin-review .admin-ack { display: flex; gap: 8px; align-items: center; }
+.admin-ack input[type=checkbox] { width: auto; accent-color: var(--accent); }
+.admin-diagnostic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; }
+.admin-diagnostic-grid article { padding: 18px; display: grid; gap: 8px; border-right: 1px solid var(--line); }
+.admin-diagnostic-grid article:last-child { border-right: 0; }
+.admin-diagnostic-grid small, .admin-diagnostic-grid span { font-size: 11px; color: var(--muted); line-height: 1.65; }
+.admin-diagnostic-grid strong { font-size: 19px; }
+.admin-diagnostic-grid .unhealthy strong { color: var(--danger); }
+.admin-maintenance { margin: 20px 0 0; }
+.admin-guide li, .admin-guide p { font-size: 12px; color: var(--muted); line-height: 1.8; }
+.admin-guide li { margin: 9px 0; }
+.admin-guide a { color: var(--accent); }
+@media (max-width: 800px) { .admin-layout { grid-template-columns: minmax(0, 1fr); } .admin-directory { max-height: 320px; overflow: auto; padding-right: 5px; } .admin-diagnostic-grid { grid-template-columns: 1fr; } .admin-diagnostic-grid article { border-right: 0; border-bottom: 1px solid var(--line); } .admin-diagnostic-grid article:last-child { border-bottom: 0; } }
+@media (max-width: 450px) { .admin-form-grid { grid-template-columns: 1fr; } .admin-resource, .admin-default, .admin-account-heading { flex-direction: column; align-items: flex-start; gap: 10px; } .workspace-switch button { flex: 1; padding: 12px 8px; } }
 .storage-vault { display: grid; grid-template-columns: auto minmax(120px, 300px); align-items: center; gap: 14px; margin: 20px 0; font-size: 13px; color: var(--muted); }
 .storage-vault select { padding: 10px 12px; font: inherit; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); min-width: 0; }
 .storage-ledger { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }

@@ -98,7 +98,7 @@ def register_admin(app, db, identity, error, clock, operators, default_quota, re
             authorize(conn,authorization)
             user = account(conn,user_id)
             policy=row(conn,'SELECT default_quota,revision FROM account_policy WHERE user_id=:id',id=user_id)
-            vaults=[dict(item) for item in rows(conn,'SELECT id,name,quota,used,sequence FROM vaults WHERE user_id=:id AND id<:before ORDER BY id DESC LIMIT :limit',id=user_id,before=vault_before or 'f'*33,limit=limit+1)]
+            vaults=[dict(item) for item in rows(conn,'SELECT v.id,v.name,v.quota,v.used,v.sequence,(SELECT COALESCE(SUM(size),0) FROM uploads u WHERE u.vault_id=v.id AND u.expires>:now) AS reserved_bytes FROM vaults v WHERE v.user_id=:id AND v.id<:before ORDER BY v.id DESC LIMIT :limit',id=user_id,before=vault_before or 'f'*33,limit=limit+1,now=int(clock()))]
             devices=[dict(item) for item in rows(conn,'SELECT id,name,revoked FROM devices WHERE user_id=:id AND id<:before ORDER BY id DESC LIMIT :limit',id=user_id,before=device_before or 'f'*33,limit=limit+1)]
             totals=dict(row(conn,'SELECT COUNT(*) AS vault_count,COALESCE(SUM(used),0) AS charged_bytes,COALESCE(SUM(quota),0) AS quota_bytes FROM vaults WHERE user_id=:id',id=user_id))
             return {'account':dict(user),'policy':dict(policy) if policy else {'default_quota':default_quota,'revision':0},
