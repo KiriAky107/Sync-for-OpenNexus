@@ -144,7 +144,9 @@ def register_admin(app, db, identity, error, clock, operators, default_quota, re
                 vault=row(conn,'SELECT * FROM vaults WHERE user_id=:user AND id=:v'+suffix,user=user_id,v=vault_id)
                 if not vault: raise error(404,'VAULT_NOT_FOUND')
                 if vault['quota'] != body.expected_quota: raise error(409,'QUOTA_CHANGED',{'quota':vault['quota']})
-                reserved=row(conn,'SELECT COALESCE(SUM(size),0) AS bytes FROM uploads WHERE vault_id=:v AND expires>:now',v=vault_id,now=int(clock()))['bytes']
+                # PostgreSQL SUM(bigint) yields Decimal; the byte count must
+                # remain an exact JSON integer in both errors and receipts.
+                reserved=int(row(conn,'SELECT COALESCE(SUM(size),0) AS bytes FROM uploads WHERE vault_id=:v AND expires>:now',v=vault_id,now=int(clock()))['bytes'])
                 if body.quota < vault['used']+reserved:
                     raise error(409,'QUOTA_IN_USE',{'charged_bytes':vault['used'],'reserved_bytes':reserved})
                 run(conn,'UPDATE vaults SET quota=:quota WHERE id=:v',quota=body.quota,v=vault_id)

@@ -3,6 +3,7 @@ import hashlib
 import json
 import threading
 import uuid
+from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
@@ -96,7 +97,8 @@ def test_account_default_policy_only_affects_new_vaults_and_is_cas_bound(admin):
     assert client.get('/sync/v1/admin/accounts/'+ids['member'],headers=auth,params={'limit':1,'vault_before':details['vaults_next_before']}).json()['vaults'][0]['id'] != details['vaults'][0]['id']
 
 
-def test_quota_changes_preserve_charged_objects_and_full_upload_reservations(admin):
+@pytest.mark.parametrize('postgres_numeric',[False,True])
+def test_quota_changes_preserve_charged_objects_and_full_upload_reservations(admin,monkeypatch,postgres_numeric):
     client,db,_,_,ids,auth,_,login,_=admin
     member,_=login('member')
     vault=client.post('/sync/v1/vaults',headers=member,json={'name':'quota'}).json()['vault_id']
@@ -106,6 +108,15 @@ def test_quota_changes_preserve_charged_objects_and_full_upload_reservations(adm
     assert client.put(base+'/uploads/'+uploaded+'?offset=0',headers=member,content=content).status_code == 200
     assert client.post(base+'/uploads/'+uploaded+'/complete',headers=member).status_code == 200
     pending=client.post(base+'/uploads',headers=member,json={'content_hash':'f'*64,'size':14}).json()['upload_id']
+    if postgres_numeric:
+        from sync_server import admin as management
+        original=management.row
+        def numeric_row(conn,query,**values):
+            result=original(conn,query,**values)
+            if query.startswith('SELECT COALESCE(SUM(size),0) AS bytes FROM uploads'):
+                return {**dict(result),'bytes':Decimal(result['bytes'])}
+            return result
+        monkeypatch.setattr(management,'row',numeric_row)
     overview=client.get('/sync/v1/admin/accounts/'+ids['member'],headers=auth).json()
     resource=next(item for item in overview['vaults'] if item['id']==vault)
     assert resource['used'] == 10 and resource['reserved_bytes'] == 14
