@@ -6,6 +6,27 @@ const session = suffix => ({ access_token: 'access-' + suffix, refresh_token: 'r
 const response = (payload, status = 200) => new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json' } })
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 
+test('unknown owner cancellation is reconciled with GET without replaying the mutation', async t => {
+  const methods = []
+  t.mock.method(globalThis, 'fetch', async (path, init) => {
+    if (path === '/sync/v1/auth/sessions') return response(session('storage'))
+    methods.push({ path, method: init.method || 'GET' })
+    if (path.endsWith('/cancel')) return response({ error: { code: 'OUTCOME_UNKNOWN' } }, 503)
+    if (path.endsWith('/result')) return response({ state: 'cancelled', confirmed_at: 100 })
+    return response({ items: [], next_before: null })
+  })
+  const api = new SyncApi()
+  await api.login('fixture', 'controlled-password', 'console')
+  await assert.rejects(api.cancelUpload('own-vault', 'original-upload'), /OUTCOME_UNKNOWN/)
+  assert.equal((await api.uploadResult('own-vault', 'original-upload')).state, 'cancelled')
+  await api.uploads('own-vault', '100:abcdef')
+  assert.deepEqual(methods.slice(0, 2), [
+    { path: '/sync/v1/vaults/own-vault/uploads/original-upload/cancel', method: 'POST' },
+    { path: '/sync/v1/vaults/own-vault/uploads/original-upload/result', method: 'GET' },
+  ])
+  assert.equal(new URL('https://fixture' + methods[2].path).searchParams.get('before'), '100:abcdef')
+})
+
 test('concurrent account and operation requests rotate the single-use refresh token once', async t => {
   const refresh = deferred(), entered = deferred()
   let rotations = 0

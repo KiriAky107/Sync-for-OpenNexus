@@ -23,6 +23,30 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
+.storage-surface { margin-top: 24px; }
+.storage-vault { display: grid; grid-template-columns: auto minmax(120px, 300px); align-items: center; gap: 14px; margin: 20px 0; font-size: 13px; color: var(--muted); }
+.storage-vault select { padding: 10px 12px; font: inherit; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); min-width: 0; }
+.storage-ledger { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.storage-ledger article { display: grid; gap: 8px; padding: 18px; border-right: 1px solid var(--line); }
+.storage-ledger article:last-child { border-right: 0; }
+.storage-ledger small { color: var(--muted); font-size: 11px; }
+.storage-ledger strong { font-size: 21px; }
+.storage-progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.storage-upload { display: flex; gap: 18px; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding: 16px 0; font-size: 12px; }
+.storage-upload .item-copy { min-width: 0; overflow-wrap: anywhere; }
+.storage-upload .item-copy > span { font-size: 12px; line-height: 1.7; }
+.storage-upload > button { flex: 0 0 auto; }
+.storage-pagination { display: flex; justify-content: center; align-items: center; gap: 15px; font-size: 12px; margin: 20px 0; }
+.storage-review { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-strong); padding: 20px; margin-top: 20px; }
+.storage-review h3 { font-size: 15px; margin: 0 0 10px; }
+.storage-review code { font-size: 11px; overflow-wrap: anywhere; }
+.storage-review label { display: block; font-size: 12px; margin: 15px 0; }
+.storage-review button { margin: 4px 8px 4px 0; }
+.storage-review input[type=checkbox] { width: auto; margin-right: 8px; accent-color: var(--accent); }
+.storage-notice { font-size: 13px; padding: 12px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+@media (max-width: 700px) { .storage-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); } .storage-ledger article:nth-child(2) { border-right: 0; } .storage-ledger article:nth-child(-n+2) { border-bottom: 1px solid var(--line); } }
+@media (max-width: 450px) { .storage-upload { align-items: start; flex-direction: column; gap: 12px; } .storage-vault { grid-template-columns: 1fr; gap: 8px; } .storage-ledger article { padding: 13px; } .storage-ledger strong { font-size: 18px; } }
+
 * { box-sizing: border-box; }
 html { min-width: 320px; min-height: 100%; background: var(--bg); }
 body {

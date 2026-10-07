@@ -89,7 +89,11 @@ Open `/console/` through your reverse proxy to sign in, fix the initial credenti
 
 Open the device list in the console and revoke the selected session. Its next authenticated request fails. Vault files and retained revisions remain available to other authorized devices.
 
-### 4. Verify a backup before recovery
+### 4. Review storage and cancel an upload
+
+Open **Storage and uploads** and select a vault. Compare current objects, retained history, unreferenced objects and upload reservations using the server confirmation time. Choose an upload from your account's devices, check its offset and expiry, acknowledge its identity, then confirm cancellation. If the response is lost, use **Query original result** first; a retry keeps the same upload ID and appears only after the server confirms that the upload is still pending. A completion that wins the race is retained. Expired uploads stop reserving quota and are removed by the background staging cleaner; historical objects remain available.
+
+### 5. Verify a backup before recovery
 
 Create a backup, run `verify-backup`, and inspect the saved receipt. Recover only into an empty database and object bucket, then check `/ready` and reconnect a test device. See [Backup and Restore](#backup-and-restore) for commands and unknown-result handling.
 

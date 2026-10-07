@@ -27,6 +27,23 @@ export interface Device {
   revoked: number | boolean
 }
 
+export interface Usage {
+  schema_version: 1; confirmed_at: number; sequence: number; quota: number; charged_bytes: number
+  object_bytes: number; object_count: number; current_object_bytes: number; historical_only_bytes: number
+  unreferenced_object_bytes: number; logical_file_bytes: number; active_files: number; reserved_bytes: number
+  confirmed_upload_bytes: number; pending_uploads: number; expired_uploads: number; available_bytes: number
+  accounting_matches: boolean; history_retention: 'indefinite'
+}
+export interface PendingUpload {
+  id: string; vault_id: string; device_id: string; device_name: string; device_revoked: number
+  hash: string; size: number; offset_bytes: number; expires: number; state: 'active' | 'expired' | 'device_revoked'
+}
+export interface UploadPage { schema_version: 1; confirmed_at: number; items: PendingUpload[]; next_before: string | null }
+export interface UploadResult {
+  state: 'active' | 'expired' | 'cancelled' | 'completed' | 'damaged' | 'not_found'
+  confirmed_at: number; size?: number; offset_bytes?: number; content_hash?: string; expires?: number
+}
+
 export interface OperationReceipt {
   sequence: number
   operation_id: string
@@ -259,6 +276,18 @@ export class SyncApi {
     return this.request<Revision>(`/sync/v1/vaults/${encodeURIComponent(vault)}/files/${encodeURIComponent(file)}/restore-results/${encodeURIComponent(operation)}`)
   }
   devices() { return this.request<{ items: Device[] }>('/sync/v1/devices') }
+  usage(vault: string) { return this.request<Usage>(`/sync/v1/vaults/${encodeURIComponent(vault)}/usage`) }
+  uploads(vault: string, before?: string | null) {
+    const query = new URLSearchParams({ limit: '20' })
+    if (before) query.set('before', before)
+    return this.request<UploadPage>(`/sync/v1/vaults/${encodeURIComponent(vault)}/uploads?${query}`)
+  }
+  uploadResult(vault: string, upload: string) {
+    return this.request<UploadResult>(`/sync/v1/vaults/${encodeURIComponent(vault)}/uploads/${encodeURIComponent(upload)}/result`)
+  }
+  cancelUpload(vault: string, upload: string) {
+    return this.request<UploadResult>(`/sync/v1/vaults/${encodeURIComponent(vault)}/uploads/${encodeURIComponent(upload)}/cancel`, { method: 'POST' })
+  }
   operations(limit = 20, before?: number | null) {
     const query = new URLSearchParams({ limit: String(limit) })
     if (before != null) query.set('before', String(before))
