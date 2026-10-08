@@ -51,7 +51,7 @@ jobs:
           archives = list(Path('.build/release-inputs').glob('*_deploy.zip'))
           assert len(archives) == 1, 'One verified deployment archive is required'
           subprocess.run([sys.executable, '.build/release-tools/scripts/prepare-release.py',
-              '--repository-dir', '.', '--repository', '${{ github.repository }}', '--product', 'OpenNexus Sync',
+              '--repository-dir', '.', '--repository', '${{ github.repository }}', '--product', 'Sync for OpenNexus',
               '--version', version, '--commit', '${{ github.sha }}', '--output', '.build/publication',
               '--deployment', str(archives[0]), '--verification', '.build/release-inputs/verification.json',
               '--notes', '.github/release-notes/' + version + '.md'], check=True)
