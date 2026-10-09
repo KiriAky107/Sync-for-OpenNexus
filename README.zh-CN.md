@@ -13,24 +13,24 @@
   </p>
 
   <p>
-    <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/Version-0.6.0-5865f2?style=flat-square" alt="版本" /></a> <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml"><img src="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <img src="https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square" alt="Python 3.12+" /> <img src="https://img.shields.io/badge/API-FastAPI-05998b?style=flat-square" alt="FastAPI" /> <img src="https://img.shields.io/badge/Console-Vue_3-42b883?style=flat-square" alt="Vue 3" /> <img src="https://img.shields.io/badge/Metadata-PostgreSQL-4169e1?style=flat-square" alt="PostgreSQL" /> <img src="https://img.shields.io/badge/Objects-S3_compatible-f97316?style=flat-square" alt="S3-compatible storage" /> <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
+    <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/Version-0.7.0-5865f2?style=flat-square" alt="版本" /></a> <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml"><img src="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <img src="https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square" alt="Python 3.12+" /> <img src="https://img.shields.io/badge/API-FastAPI-05998b?style=flat-square" alt="FastAPI" /> <img src="https://img.shields.io/badge/Console-Vue_3-42b883?style=flat-square" alt="Vue 3" /> <img src="https://img.shields.io/badge/Metadata-PostgreSQL-4169e1?style=flat-square" alt="PostgreSQL" /> <img src="https://img.shields.io/badge/Objects-S3_compatible-f97316?style=flat-square" alt="S3-compatible storage" /> <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
   </p>
 
 </div>
 
 ---
 
-当前版本： [v0.6.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0)。
+当前版本： [v0.7.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.7.0)。
 
-当前开发新增本账户存储账目、上传管理与经过审核的对象回收。用量分别显示当前唯一对象、仅历史引用的对象、未引用对象和有效上传预留，并提供服务器确认时间。历史仍无限保留。
+0.7.0 支持审核并恢复文件历史、管理用量与中断的上传，并通过确认操作回收符合条件的对象。管理员可开通账户、设置配额、管理设备与查看诊断。文件历史仍无限保留。
 
-## 0.6.0 更新
+## 0.7.0 更新
 
-- 固定实验源文件、输入及成果的同步类型与能力声明，配套 OpenNexus 0.6.0。
-- 提供设备与用量查询、可信进度及冲突回执，保持分块续传、摘要校验和幂等完成。
-- 管理控制台支持账户隔离、就绪检查和持久操作记录；CLI 可核对并恢复未知操作结果。
-- PostgreSQL 与 S3 部署提供完整备份校验和空目标恢复，逐字核对数据库、对象和设备撤销状态。
-- GitHub CI 验证协议、控制台及部署包，发布固定源码、部署归档和 SHA-256 清单。
+- **审核历史恢复**：预览当前与历史内容、比较差异，核对当前版本和目标路径后恢复为新修订。
+- **用量与上传**：区分当前唯一对象、仅历史引用的对象、未引用对象和有效上传预留。分页查看上传，以记录的操作编号取消，未知结果先查询再重试。
+- **受保护的对象回收**：审核候选、核对引用和备份，隔离符合条件的对象后再次确认删除。中断操作可从持久回执续接。
+- **管理员控制台**：开通账户、设置精确配额、冻结账户与撤销设备。账户、知识库与设备分页由服务端校验角色，诊断显示确认时间。
+- **部署与恢复**：使用 PostgreSQL 和 S3 兼容存储部署，校验备份并恢复到空目标。恢复后保留设备撤销状态，获授权设备可继续同步。
 
 ## 核心亮点
 

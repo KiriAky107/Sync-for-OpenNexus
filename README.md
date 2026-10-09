@@ -13,24 +13,24 @@
   </p>
 
   <p>
-    <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0"><img src="https://img.shields.io/badge/Version-0.6.0-5865f2?style=flat-square" alt="Version" /></a> <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml"><img src="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <img src="https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square" alt="Python 3.12+" /> <img src="https://img.shields.io/badge/API-FastAPI-05998b?style=flat-square" alt="FastAPI" /> <img src="https://img.shields.io/badge/Console-Vue_3-42b883?style=flat-square" alt="Vue 3" /> <img src="https://img.shields.io/badge/Metadata-PostgreSQL-4169e1?style=flat-square" alt="PostgreSQL" /> <img src="https://img.shields.io/badge/Objects-S3_compatible-f97316?style=flat-square" alt="S3-compatible storage" /> <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
+    <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/Version-0.7.0-5865f2?style=flat-square" alt="Version" /></a> <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml"><img src="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <img src="https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square" alt="Python 3.12+" /> <img src="https://img.shields.io/badge/API-FastAPI-05998b?style=flat-square" alt="FastAPI" /> <img src="https://img.shields.io/badge/Console-Vue_3-42b883?style=flat-square" alt="Vue 3" /> <img src="https://img.shields.io/badge/Metadata-PostgreSQL-4169e1?style=flat-square" alt="PostgreSQL" /> <img src="https://img.shields.io/badge/Objects-S3_compatible-f97316?style=flat-square" alt="S3-compatible storage" /> <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
   </p>
 
 </div>
 
 ---
 
-Current release: [v0.6.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.6.0).
+Current release: [v0.7.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.7.0).
 
-Current development adds account-scoped storage accounting, upload management and reviewed object reclamation. Usage separates current unique objects, objects retained only by history, unreferenced objects and active upload reservations, with a server confirmation time. History remains indefinitely retained.
+0.7.0 lets users review and restore file history, manage storage and interrupted uploads, and reclaim eligible objects through confirmed operations. Administrators can open accounts, set quotas, manage devices and inspect diagnostics. History remains indefinitely retained.
 
-## What’s New in 0.6.0
+## What’s New in 0.7.0
 
-- Declare synchronization types and capabilities for retained experiment sources, inputs and artifacts, paired with OpenNexus 0.6.0.
-- Expose devices, usage, progress and conflict receipts while retaining chunk offsets, digest verification and idempotent completion.
-- The management console isolates accounts and exposes readiness and durable operation records. The CLI can inspect and reconcile unknown outcomes.
-- PostgreSQL and S3 deployment includes verified backups and restoration into empty targets, checking database rows, object bytes and device revocation state.
-- GitHub CI verifies the protocol, console and deployment package; releases provide fixed source, deployment archives and SHA-256 checksums.
+- **Reviewed history recovery**: Preview current and historical content, compare changes, and restore as a new revision after checking the current version and destination.
+- **Storage and uploads**: Distinguish current unique objects, history-only objects, unreferenced objects and active upload reservations. Paginate uploads, cancel with a recorded operation ID, and query unknown results before retrying.
+- **Protected object reclamation**: Review candidates, check references and backups, quarantine eligible objects, then confirm removal. Interrupted operations resume from durable receipts.
+- **Administrator console**: Open accounts, set exact quotas, freeze accounts and revoke devices. Paginated accounts, vaults and devices respect server-side roles; diagnostics identify their confirmation time.
+- **Deployment and recovery**: Deploy with PostgreSQL and S3-compatible storage, verify backups and restore into empty targets. Restored devices retain their revocation state and can resume authorized synchronization.
 
 ## Highlights
 
