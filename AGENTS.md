@@ -12,3 +12,10 @@ The canonical README style is defined in [OpenNexus's AGENTS.md](https://github.
 - Verify quick-start commands and links against the current implementation. Keep credentials as placeholders and show the applicable restore target requirements.
 
 Private plans, internal `docs`, local receipts, credentials, databases, object bytes, backups and user vaults stay local. Public README files and this user-requested writing guide may be committed. Do not repeat unchanged documentation tracking checks. Group changes by purpose, validate affected behavior, and protect production data and old releases.
+
+## Git workflow
+
+- Name branches by engineering purpose: `feat/<scope>`, `fix/<scope>`, `perf/<scope>`, `refactor/<scope>`, `test/<scope>`, `docs/<scope>`, `chore/<scope>`, `release/<version>` or `hotfix/<scope>`. Use concise lowercase words separated by hyphens and a concrete scope or version.
+- Never use `codex` or another agent, model or tool name as a branch prefix. This applies to local and remote branches in OpenNexus, Sync and Community.
+- Keep `main` as the integration branch. Start a suitably named branch for each new task; do not reuse a completed release branch for unrelated work.
+- Preserve commit identities when renaming branches. Keep release tags and packaged source pinned to their verified commits, even when later documentation commits advance a branch.
