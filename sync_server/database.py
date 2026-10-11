@@ -30,6 +30,8 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS reclamation_objects_pending ON reclamation_objects (vault_id,hash,state)",
     "CREATE TABLE IF NOT EXISTS account_policy (user_id TEXT PRIMARY KEY, default_quota BIGINT NOT NULL, revision BIGINT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS admin_receipts (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, kind TEXT NOT NULL, target_id TEXT NOT NULL, input_salt TEXT NOT NULL, fingerprint TEXT NOT NULL, response TEXT NOT NULL, confirmed_at BIGINT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS device_activity (device_id TEXT PRIMARY KEY, authenticated_at BIGINT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS device_progress (device_id TEXT NOT NULL, vault_id TEXT NOT NULL, committed_sequence BIGINT, committed_at BIGINT, offered_sequence BIGINT, offered_at BIGINT, PRIMARY KEY(device_id,vault_id))",
 ]
 
 

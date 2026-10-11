@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import socket
 import sys
 import time
@@ -312,8 +313,18 @@ def probe(work: Path):
                 committed = checked(client, 'POST', base+'/revisions', headers=auth, json=body)
                 if checked(client, 'POST', base+'/revisions', headers=auth, json=body) != committed:
                     raise ProbeFailure('REVISION_RECEIPT_CHANGED')
+            stage = 'device_commit_and_offered_progress'
+            second_auth = {'Authorization': 'Bearer '+sessions[1]['access_token']}
+            offered = checked(client, 'GET', base+'/changes', headers=second_auth, params={'limit':2})
+            if offered['cursor'] != 2 or len(offered['items']) != 2:
+                raise ProbeFailure('DEVICE_OFFERED_PAGE_CHANGED')
+            device_proof = device_progress_probe(client, source, base, auth, sessions)
+            report['device_progress'] = device_proof
             checked(client, 'DELETE', '/sync/v1/devices/'+sessions[1]['device_id'], headers=auth, status=204)
+            checked(client, 'GET', base+'/devices/progress', headers=second_auth, status=401)
+            progress_snapshot = checked(client, 'GET', base+'/devices/progress', headers=auth)['items']
         report['checks'].append('confirmed_upload_and_revision_receipts')
+        report['checks'].append('sampled_authentication_confirmed_commit_and_generated_page_are_distinct')
 
         stage = 'backup_verify_restore'
         snapshot = work/'snapshot'
@@ -330,8 +341,29 @@ def probe(work: Path):
             raise ProbeFailure('RESTORED_DATABASE_ROWS_CHANGED')
         report['checks'].append('all_database_tables_and_object_hashes_restored')
 
+        stage = 'legacy_device_observation_backup'
+        legacy_snapshot = work/'legacy-snapshot'
+        legacy_progress_snapshot(snapshot, legacy_snapshot)
+        legacy, legacy_url = database('legacy')
+        legacy_objects = bucket('legacy')
+        legacy_journal = work/'legacy-operations.sqlite3'
+        cli(repo, work, legacy_journal, legacy_url, endpoint, legacy_objects.bucket,
+            'restore', '--directory', str(legacy_snapshot), '--io-workers', '2')
+        with TestClient(create_app(legacy, legacy_objects, work/'legacy-staging')) as client:
+            legacy_page = checked(client, 'GET', base+'/devices/progress', headers=auth)
+            if (legacy_page['vault_sequence'] != 3 or len(legacy_page['items']) != len(progress_snapshot)
+                or any(item[name] is not None for item in legacy_page['items']
+                       for name in ['authenticated_at','committed_sequence','committed_at','offered_sequence','offered_at'])):
+                raise ProbeFailure('LEGACY_BACKUP_OBSERVATIONS_NOT_UNKNOWN')
+        report['device_progress']['legacy_backup_restores_unknown'] = True
+        report['checks'].append('legacy_backup_without_observation_tables_restores_into_empty_providers')
+
         stage = 'restored_protocol_and_authority'
         with TestClient(create_app(restored, restored_objects, work/'restored-staging')) as client:
+            # This read does not change the restored authentication or progress rows.
+            if checked(client, 'GET', base+'/devices/progress', headers=auth)['items'] != progress_snapshot:
+                raise ProbeFailure('RESTORED_DEVICE_OBSERVATIONS_CHANGED')
+            report['device_progress']['backup_and_restored_observations_match'] = True
             changes = checked(client, 'GET', base+'/changes', headers=auth)
             if changes['cursor'] != 3 or [x['file_id'] for x in changes['items']] != ids:
                 raise ProbeFailure('RESTORED_CURSOR_OR_IDENTITY_CHANGED')
@@ -494,6 +526,53 @@ def protected_reclamation(repo, work, journal, db, objects, url, endpoint, vault
                     'permanent_history_preserved':True, 'new_http_mutations':0}
 
 
+def legacy_progress_snapshot(source, destination):
+    """Create a separate older-format snapshot, keeping the original bytes."""
+    from sync_server.operations import sha256_file
+    shutil.copytree(source, destination)
+    database = destination/'database.jsonl'
+    records = [json.loads(line) for line in database.read_text('utf-8').splitlines()]
+    records = [item for item in records if item['table'] not in {'device_activity','device_progress'}]
+    database.write_text(''.join(json.dumps(item,ensure_ascii=False)+'\n' for item in records),'utf-8')
+    manifest = json.loads((destination/'manifest.json').read_text('utf-8'))
+    manifest['database_sha256'] = sha256_file(database)
+    for table in ['device_activity','device_progress']:
+        manifest['database_rows'].pop(table, None)
+    (destination/'manifest.json').write_text(json.dumps(manifest)+'\n','utf-8')
+
+
+def device_progress_probe(client, db, base, auth, sessions):
+    """Verify actual server observations without claiming client acknowledgement."""
+    from sync_server.database import rows
+    def observations():
+        with db.read_only() as conn:
+            return {table:[dict(item) for item in rows(conn, 'SELECT * FROM '+table+' ORDER BY 1,2')]
+                    for table in ['device_activity','device_progress']}
+    before = observations()
+    observed = checked(client, 'GET', base+'/devices/progress', headers=auth)
+    if observations() != before:
+        raise ProbeFailure('DEVICE_PROGRESS_READ_CHANGED_OBSERVATIONS')
+    devices = {item['device_id']:item for item in observed['items']}
+    writer, reader = devices[sessions[0]['device_id']], devices[sessions[1]['device_id']]
+    if (observed['client_application_confirmed'] is not False
+        or observed['offered_semantics'] != 'server_generated_page'
+        or observed['activity_sample_seconds'] != 60
+        or observed['vault_sequence'] != 3 or writer['committed_sequence'] != 3
+        or writer['offered_sequence'] is not None or reader['committed_sequence'] is not None
+        or reader['offered_sequence'] != 2
+        or writer['authenticated_at'] is None or reader['authenticated_at'] is None):
+        raise ProbeFailure('DEVICE_PROGRESS_SEMANTICS_CHANGED')
+    # A rejected cursor must not advance the reader's persisted observation.
+    second = {'Authorization':'Bearer '+sessions[1]['access_token']}
+    checked(client, 'GET', base+'/changes', headers=second, params={'cursor':4}, status=409)
+    if observations() != before:
+        raise ProbeFailure('REJECTED_PAGE_CHANGED_DEVICE_PROGRESS')
+    return {'writer_committed_sequence':3, 'reader_offered_sequence':2,
+            'reader_committed_sequence':None, 'client_application_confirmed':False,
+            'activity_sample_seconds':60, 'readonly_observations_unchanged':True,
+            'rejected_cursor_unchanged':True}
+
+
 def reclamation_read_probe(client, db, objects, backup, auth, ordinary, original):
     """Read a real CLI-created plan while protecting the actual recovery objects."""
     from sqlalchemy.exc import DBAPIError
@@ -502,7 +581,7 @@ def reclamation_read_probe(client, db, objects, backup, auth, ordinary, original
     def ledger():
         with db.read_only() as conn:
             return {table:[dict(item) for item in rows(conn, 'SELECT * FROM '+table+' ORDER BY 1')]
-                    for table in ['reclamation_plans','reclamation_objects','objects','revisions','vaults','sessions']}
+                    for table in ['reclamation_plans','reclamation_objects','objects','revisions','vaults','sessions','device_activity','device_progress']}
     before = ledger()
     backup_bytes = {str(path.relative_to(backup)):hashlib.sha256(path.read_bytes()).hexdigest()
                     for path in backup.rglob('*') if path.is_file()}

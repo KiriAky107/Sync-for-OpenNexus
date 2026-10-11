@@ -55,8 +55,10 @@ TABLES: dict[str, tuple[str, ...]] = {
     "reclamation_objects": ("plan_id", "vault_id", "hash", "size", "state", "code", "confirmed_at"),
     "account_policy": ("user_id", "default_quota", "revision"),
     "admin_receipts": ("id", "actor_id", "kind", "target_id", "input_salt", "fingerprint", "response", "confirmed_at"),
+    "device_activity": ("device_id", "authenticated_at"),
+    "device_progress": ("device_id", "vault_id", "committed_sequence", "committed_at", "offered_sequence", "offered_at"),
 }
-OPTIONAL_TABLES = frozenset({'revision_annotations', 'upload_dispositions', 'maintenance_summary', 'reclamation_plans', 'reclamation_objects', 'account_policy', 'admin_receipts'})
+OPTIONAL_TABLES = frozenset({'revision_annotations', 'upload_dispositions', 'maintenance_summary', 'reclamation_plans', 'reclamation_objects', 'account_policy', 'admin_receipts', 'device_activity', 'device_progress'})
 
 
 class OperationsError(RuntimeError):

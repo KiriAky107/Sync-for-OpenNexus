@@ -90,7 +90,9 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             response.headers["Referrer-Policy"] = "no-referrer"
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["X-Frame-Options"] = "DENY"
-        if request.url.path.startswith('/sync/v1/admin/'):
+        if (request.url.path.startswith('/sync/v1/admin/')
+            or request.url.path == '/sync/v1/devices'
+            or request.url.path.startswith('/sync/v1/vaults/') and request.url.path.endswith('/devices/progress')):
             response.headers['Cache-Control'] = 'private, no-store'
         return response
 
@@ -112,7 +114,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         # Pydantic 的原始错误可能带请求正文，禁止回显密码或笔记。
         return JSONResponse({"error": {"code": "INVALID_REQUEST", "details": {}}}, status_code=422)
 
-    def identity(conn, authorization, *, allow_bootstrap=False):
+    def identity(conn, authorization, *, allow_bootstrap=False, observe=True):
         token = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
         session = row(conn, "SELECT s.*, d.user_id, d.revoked FROM sessions s JOIN devices d ON d.id=s.device_id WHERE s.token=:token", token=digest(token))
         if not session or session["revoked"] or session["expires"] <= clock():
@@ -120,6 +122,9 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
         if not allow_bootstrap and row(conn, "SELECT user_id FROM bootstrap_state WHERE user_id=:user",
                                        user=session["user_id"]):
             raise SyncError(403, "CREDENTIAL_CHANGE_REQUIRED")
+        if observe:
+            from .device_progress import authenticated
+            authenticated(conn, session['device_id'], int(clock()))
         return session
 
     def vault(conn, vault_id, authorization, *, lock=False):
@@ -200,6 +205,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     app.state.readiness = readiness
     from .admin import register_admin
     register_admin(app,db,identity,SyncError,clock,operators,quota,readiness)
+    from .device_progress import register_device_progress
+    register_device_progress(app,db,identity,SyncError,clock)
     from sqlalchemy.exc import SQLAlchemyError
     from botocore.exceptions import BotoCoreError, ClientError
 
@@ -299,7 +306,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     def devices(authorization: str = Header(default="")):
         with db.transaction() as conn:
             session = identity(conn, authorization)
-            return {"items": rows(conn, "SELECT id,name,revoked FROM devices WHERE user_id=:user", user=session["user_id"])}
+            return {"items": rows(conn, "SELECT d.id,d.name,d.revoked,a.authenticated_at FROM devices d LEFT JOIN device_activity a ON a.device_id=d.id WHERE d.user_id=:user", user=session["user_id"]),
+                    'observed_at':int(clock()), 'activity_sample_seconds':60}
 
     @app.get("/sync/v1/operations")
     def operation_records(response: Response, authorization: str = Header(default=""),
@@ -527,6 +535,8 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
             key=body.path.casefold(), deleted=int(body.operation == "delete"))
         run(conn, "INSERT INTO revision_annotations VALUES (:v,:s,:created,:source)",
             v=vault_id, s=sequence, created=int(clock()), source=restored_from)
+        from .device_progress import progress
+        progress(conn, session['device_id'], vault_id, sequence, int(clock()), kind='committed')
         return dict(row(conn, "SELECT * FROM revisions WHERE vault_id=:v AND sequence=:s", v=vault_id, s=sequence))
 
     @app.post("/sync/v1/vaults/{vault_id}/revisions")
@@ -539,12 +549,14 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     def changes(vault_id: str, cursor: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=500),
                 boundary: int | None = Query(default=None, ge=0), authorization: str = Header(default="")):
         with db.transaction() as conn:
-            _, item = vault(conn, vault_id, authorization)
+            actor, item = vault(conn, vault_id, authorization)
             end = item["sequence"] if boundary is None else boundary
             if cursor > end or end > item["sequence"]:
                 raise SyncError(409, "CURSOR_INVALID")
             items = rows(conn, "SELECT * FROM revisions WHERE vault_id=:v AND sequence>:cursor AND sequence<=:end ORDER BY sequence LIMIT :limit", v=vault_id, cursor=cursor, end=end, limit=limit)
             next_cursor = items[-1]["sequence"] if items else cursor
+            from .device_progress import progress
+            progress(conn, actor['device_id'], vault_id, next_cursor, int(clock()), kind='offered')
             return {"items": items, "cursor": next_cursor, "boundary": end, "has_more": next_cursor < end}
 
     @app.get("/sync/v1/vaults/{vault_id}/objects/{content_hash}")

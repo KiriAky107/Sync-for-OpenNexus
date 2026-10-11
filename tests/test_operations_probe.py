@@ -1,7 +1,8 @@
 """The production probe must refuse remote or preexisting resources before IO."""
 import pytest
 
-from tools.operations_probe import ProbeFailure, administration_seed, administration_restored, configuration, probe, served_protocol
+from tools.operations_probe import ProbeFailure, administration_seed, administration_restored, configuration, probe, served_protocol, device_progress_probe
+from test_admin import admin
 
 
 def environment():
@@ -70,3 +71,24 @@ def test_operator_probe_actions_preserve_policy_and_sync_across_fixture_snapshot
     assert proof['post_restore_bytes'] == len(b'restored sync bytes')
     assert proof['ordinary_admin_access_rejected'] and proof['revoked_access_and_refresh_rejected']
     source.engine.dispose(); restored.engine.dispose()
+
+
+def test_progress_probe_reads_two_real_device_observations_without_updating_them(admin):
+    from test_protocol import change, upload
+    import uuid
+    client,db,_,_,_,auth,session,login,_=admin
+    second,second_session=login('operator')
+    vault=client.post('/sync/v1/vaults',headers=auth,json={'name':'observations'}).json()['vault_id']
+    base='/sync/v1/vaults/'+vault
+    content=b'actual device observation'
+    sha=upload(client,base,auth,content)
+    for index in range(3):
+        body={**change(sha,size=len(content)), 'file_id':uuid.uuid4().hex, 'path':f'{index}.md'}
+        assert client.post(base+'/revisions',headers=auth,json=body).status_code==200
+    assert client.get(base+'/changes?limit=2',headers=second).json()['cursor']==2
+    # SQLite exercises the probe contract locally; actual PostgreSQL/S3,
+    # packaged CLI and both backup formats run only in production CI.
+    proof=device_progress_probe(client,db,base,auth,[session,second_session])
+    assert proof['readonly_observations_unchanged'] and proof['rejected_cursor_unchanged']
+    assert proof['writer_committed_sequence']==3 and proof['reader_offered_sequence']==2
+    assert proof['reader_committed_sequence'] is None and not proof['client_application_confirmed']

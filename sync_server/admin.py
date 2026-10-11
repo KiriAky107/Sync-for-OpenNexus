@@ -43,8 +43,8 @@ class DefaultQuota(Operation):
 
 
 def register_admin(app, db, identity, error, clock, operators, default_quota, readiness):
-    def authorize(conn, authorization):
-        actor = identity(conn, authorization)
+    def authorize(conn, authorization, *, observe=True):
+        actor = identity(conn, authorization, observe=observe)
         if actor['user_id'] not in operators:
             raise error(403, 'OPERATIONS_FORBIDDEN')
         return actor['user_id']
@@ -56,7 +56,7 @@ def register_admin(app, db, identity, error, clock, operators, default_quota, re
                           state: Literal['preview', 'running', 'complete'] | None = None,
                           authorization: str = Header(default='')):
         with db.read_only() as conn:
-            authorize(conn, authorization)
+            authorize(conn, authorization, observe=False)
             if before and int(before.split(':')[0]) > 2**53-1:
                 raise error(422, 'INVALID_REQUEST')
             return plan_page(conn, observed_at=int(clock()), limit=limit, before=before, vault_id=vault_id, state=state)
@@ -64,11 +64,21 @@ def register_admin(app, db, identity, error, clock, operators, default_quota, re
     @app.get('/sync/v1/admin/reclamation/plans/{plan_id}')
     def reclamation_plan(plan_id: Identifier, authorization: str = Header(default='')):
         with db.read_only() as conn:
-            authorize(conn, authorization)
+            authorize(conn, authorization, observe=False)
             result = plan_detail(conn, plan_id, observed_at=int(clock()))
             if result is None:
                 raise error(404, 'GC_PLAN_NOT_FOUND')
             return result
+
+    @app.get('/sync/v1/admin/accounts/{user_id}/vaults/{vault_id}/devices/progress')
+    def device_progress(user_id: Identifier, vault_id: Identifier, limit: int = Query(default=20, ge=1, le=100),
+                        before: str | None = Query(default=None, pattern=r'^[0-9a-f]{32}$'), authorization: str = Header(default='')):
+        from .device_progress import device_page
+        with db.read_only() as conn:
+            authorize(conn, authorization, observe=False)
+            vault = row(conn, 'SELECT id,sequence FROM vaults WHERE id=:id AND user_id=:user', id=vault_id, user=user_id)
+            if not vault: raise error(404, 'VAULT_NOT_FOUND')
+            return device_page(conn, user_id=user_id, vault=vault, limit=limit, before=before, observed_at=int(clock()))
 
     def account(conn, user_id):
         user = row(conn, 'SELECT id,username FROM users WHERE id=:id', id=user_id)
@@ -122,7 +132,7 @@ def register_admin(app, db, identity, error, clock, operators, default_quota, re
             user = account(conn,user_id)
             policy=row(conn,'SELECT default_quota,revision FROM account_policy WHERE user_id=:id',id=user_id)
             vaults=[dict(item) for item in rows(conn,'SELECT v.id,v.name,v.quota,v.used,v.sequence,(SELECT COALESCE(SUM(size),0) FROM uploads u WHERE u.vault_id=v.id AND u.expires>:now) AS reserved_bytes FROM vaults v WHERE v.user_id=:id AND v.id<:before ORDER BY v.id DESC LIMIT :limit',id=user_id,before=vault_before or 'f'*33,limit=limit+1,now=int(clock()))]
-            devices=[dict(item) for item in rows(conn,'SELECT id,name,revoked FROM devices WHERE user_id=:id AND id<:before ORDER BY id DESC LIMIT :limit',id=user_id,before=device_before or 'f'*33,limit=limit+1)]
+            devices=[dict(item) for item in rows(conn,'SELECT d.id,d.name,d.revoked,a.authenticated_at FROM devices d LEFT JOIN device_activity a ON a.device_id=d.id WHERE d.user_id=:id AND d.id<:before ORDER BY d.id DESC LIMIT :limit',id=user_id,before=device_before or 'f'*33,limit=limit+1)]
             totals=dict(row(conn,'SELECT COUNT(*) AS vault_count,COALESCE(SUM(used),0) AS charged_bytes,COALESCE(SUM(quota),0) AS quota_bytes FROM vaults WHERE user_id=:id',id=user_id))
             return {'account':dict(user),'policy':dict(policy) if policy else {'default_quota':default_quota,'revision':0},
                     'vaults':vaults[:limit],'devices':devices[:limit],'totals':totals,
