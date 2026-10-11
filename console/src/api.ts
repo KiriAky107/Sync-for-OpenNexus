@@ -25,6 +25,18 @@ export interface Device {
   id: string
   name: string
   revoked: number | boolean
+  authenticated_at?: number | null
+}
+
+export interface DeviceObservation {
+  device_id: string; name: string; revoked: number | boolean; authenticated_at: number | null
+  committed_sequence: number | null; committed_at: number | null
+  offered_sequence: number | null; offered_at: number | null
+}
+export interface DeviceProgressPage {
+  schema_version: 1; observed_at: number; activity_sample_seconds: 60
+  client_application_confirmed: false; offered_semantics: 'server_generated_page'
+  vault_id: string; vault_sequence: number; items: DeviceObservation[]; next_before: string | null
 }
 
 export type PlanState = 'preview' | 'running' | 'complete'
@@ -56,6 +68,28 @@ const integer = (value: unknown): value is number => typeof value === 'number' &
 const boundedText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
 function invalid(): never { throw new Error('INVALID_RESPONSE') }
+export function parseDeviceProgress(value: unknown, vault: string, before: string | null = null): DeviceProgressPage {
+  const timestamp = (value: unknown) => integer(value) && value <= 8640000000000
+  if (!object(value) || value.schema_version !== 1 || value.vault_id !== vault
+    || !timestamp(value.observed_at) || !integer(value.vault_sequence) || value.activity_sample_seconds !== 60
+    || value.client_application_confirmed !== false || value.offered_semantics !== 'server_generated_page'
+    || !Array.isArray(value.items) || value.items.length > 20) invalid()
+  const pair = (item: Record<string, unknown>, kind: 'committed' | 'offered') => {
+    const sequence = item[kind + '_sequence'], time = item[kind + '_at']
+    return sequence === null ? time === null : integer(sequence) && sequence <= (value.vault_sequence as number)
+      && (kind === 'offered' || sequence > 0) && timestamp(time)
+  }
+  for (let i = 0; i < value.items.length; i++) {
+    const item: unknown = value.items[i], previous = value.items[i - 1]
+    if (!object(item) || typeof item.device_id !== 'string' || !planId.test(item.device_id)
+      || !boundedText(item.name, 256) || ![0, 1, true, false].includes(item.revoked as number | boolean)
+      || item.authenticated_at !== null && !timestamp(item.authenticated_at)
+      || !pair(item, 'committed') || !pair(item, 'offered')
+      || previous && item.device_id >= previous.device_id || before && item.device_id >= before) invalid()
+  }
+  if (value.next_before !== null && (!value.items.length || value.next_before !== value.items.at(-1)?.device_id)) invalid()
+  return value as unknown as DeviceProgressPage
+}
 function summaryValid(value: unknown, observed: number): value is ReclamationSummary {
   if (!object(value) || typeof value.plan_id !== 'string' || !planId.test(value.plan_id) || typeof value.vault_id !== 'string' || !planId.test(value.vault_id)) return false
   if (!boundedText(value.actor_id, 256) || !boundedText(value.code, 80) || !['preview', 'running', 'complete'].includes(String(value.state))) return false
@@ -366,6 +400,13 @@ export class SyncApi {
     return this.request<AdminDetails>(`/sync/v1/admin/accounts/${encodeURIComponent(user)}?${query}`)
   }
   adminDiagnostics() { return this.request<AdminDiagnostics>('/sync/v1/admin/diagnostics') }
+  async deviceProgress(vault: string, before: string | null = null, account?: string) {
+    if (!planId.test(vault) || before !== null && !planId.test(before) || account !== undefined && !planId.test(account)) throw new Error('INVALID_REQUEST')
+    const query = new URLSearchParams({ limit: '20' })
+    if (before) query.set('before', before)
+    const base = account ? `/sync/v1/admin/accounts/${account}/vaults/${vault}` : `/sync/v1/vaults/${vault}`
+    return parseDeviceProgress(await this.request<unknown>(base + '/devices/progress?' + query), vault, before)
+  }
   async reclamationPlans(options: { before?: string | null; vault?: string; state?: PlanState | '' } = {}) {
     if (options.before && !planCursor(options.before) || options.vault && !planId.test(options.vault) || options.state && !['preview', 'running', 'complete'].includes(options.state)) throw new Error('INVALID_REQUEST')
     const query = new URLSearchParams({ limit: '20' })

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch 
 import { SyncApiError, type SyncApi, type AdminAccounts, type AdminDetails, type AdminDiagnostics, type AdminReceipt, type AdminVault, type Device } from './api'
 import { execute, operationId, quotaBytes, validateReceipt, type AdminIntent } from './adminIntent'
 import ReclamationPanel from './ReclamationPanel.vue'
+import DeviceProgressPanel from './DeviceProgressPanel.vue'
 
 const props = defineProps<{ api: SyncApi }>()
 const emit = defineEmits<{ pending: [value: boolean]; expired: []; forbidden: []; refreshed: [] }>()
@@ -223,4 +224,5 @@ onBeforeUnmount(() => { alive = false; version++; diagnosticVersion++; intent.va
   </section>
   <section class="surface admin-guide"><div class="surface-heading"><div><p>Deploy &amp; recover</p><h2>部署与恢复</h2></div></div><ol><li><strong>首次部署：</strong>初始化数据库和对象存储，固定初始账户凭据，再配置获授权的管理员账户。</li><li><strong>升级前：</strong>结束未完成上传，创建新的备份并完整校验，核对下面的运维回执；保持原数据库和对象桶。</li><li><strong>需要恢复时：</strong>使用空数据库与空对象桶，恢复后检查依赖，再接入两台测试设备确认同步。</li></ol><p><a href="https://github.com/KiriAky107/Sync-for-OpenNexus#backup-and-restore" target="_blank" rel="noreferrer">查看部署、备份与恢复命令</a></p></section>
   <ReclamationPanel :api="api" :disabled="mutationBusy || !!intent" @expired="emit('expired')" @forbidden="emit('forbidden')" />
+  <DeviceProgressPanel v-if="details" :key="selectedId" :api="api" :vaults="details.vaults" :account="selectedId" :disabled="locked || stale" @expired="emit('expired')" @forbidden="emit('forbidden')" />
 </template>

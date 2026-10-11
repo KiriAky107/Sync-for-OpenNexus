@@ -267,6 +267,17 @@ footer { width: min(1280px, calc(100% - 48px)); min-height: 62px; margin: 0 auto
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
 .reclamation-surface { min-width: 0; }
+.device-progress-surface { min-width: 0; }
+.device-progress-choice { display: grid; gap: 8px; margin: 20px 0; }
+.device-progress-choice select { width: 100%; min-width: 0; }
+.device-progress-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; margin: 20px 0; }
+.device-progress-item { min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 16px; font-size: 12px; line-height: 1.65; }
+.device-progress-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+.device-progress-item code, .device-progress-surface p { overflow-wrap: anywhere; }
+.device-progress-item dl { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 8px 12px; margin-bottom: 0; }
+.device-progress-item dt { color: var(--muted); }
+.device-progress-item dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 450px) { .device-progress-item dl { grid-template-columns: minmax(0, 1fr); gap: 3px; } .device-progress-item dd { margin-bottom: 8px; } .device-progress-surface .surface-heading { flex-wrap: wrap; gap: 12px; } }
 .reclamation-filters fieldset { border: 0; padding: 0; margin: 20px 0; display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
 .reclamation-filters label { flex: 1; min-width: 160px; }
 .reclamation-lookup { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 20px 0; }

@@ -4,6 +4,7 @@ import { SyncApi, type Device, type ServiceStatus, type Vault, type OperationsPa
 import VaultHistory from './VaultHistory.vue'
 import VaultStorage from './VaultStorage.vue'
 import AdminPanel from './AdminPanel.vue'
+import DeviceProgressPanel from './DeviceProgressPanel.vue'
 
 const api = new SyncApi()
 const service = reactive<ServiceStatus>({ health: false, ready: false, protocol: 1, maxObjectSize: 100 * 1024 * 1024 })
@@ -376,6 +377,7 @@ onBeforeUnmount(() => {
       </div>
       <VaultHistory :api="api" :vaults="vaults" @refreshed="refreshAccount" @expired="leaveConsole" @pending="historyPending = $event" />
       <VaultStorage :api="api" :vaults="vaults" @refreshed="refreshAccount" @expired="leaveConsole" @pending="storagePending = $event" />
+      <DeviceProgressPanel :api="api" :vaults="vaults" :disabled="busy || historyPending || storagePending" @expired="leaveConsole" />
       </div>
       <AdminPanel v-if="operatorRole && activeView === 'admin'" :api="api" @pending="adminPending = $event" @expired="leaveConsole" @forbidden="leaveAdmin" @refreshed="refreshAccount" />
       <section v-if="operatorRole && activeView === 'admin'" class="surface operations-surface" aria-labelledby="operations-title">
