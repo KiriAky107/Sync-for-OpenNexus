@@ -41,7 +41,20 @@ def test_vue_console_is_hardened_and_uses_the_public_sync_api(tmp_path):
             assert response.headers["x-content-type-options"] == "nosniff"
             bodies.append(response.content)
         bundle = b"".join(bodies)
-        assert b"localStorage" not in bundle
+        # Only a validated, non-sensitive language preference is persistent.
+        # Guard the shipped bundle as well as the locale client's runtime tests:
+        # account/session code must not acquire another storage read or write.
+        assert bundle.count(b"localStorage") == 2
+        preference_calls = re.findall(
+            rb"localStorage\.(getItem|setItem)\(([A-Za-z_$][\w$]*)[,)]", bundle
+        )
+        assert [method for method, _ in preference_calls] == [b"getItem", b"setItem"]
+        preference = preference_calls[0][1]
+        assert preference_calls[1][1] == preference
+        assert re.search(
+            rb"(?<![\w$])" + re.escape(preference) + rb"=[\"']opennexus-sync-language[\"']",
+            bundle,
+        )
         assert b"sessionStorage" not in bundle
         assert b"controlled-demo-password" not in bundle
 
