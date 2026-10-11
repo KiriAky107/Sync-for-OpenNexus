@@ -3,12 +3,14 @@ import hashlib
 import json
 import secrets
 from typing import Annotated
+from typing import Literal
 
 from fastapi import Header, Path, Query
 from pydantic import Field, StrictInt, field_validator
 
 from .database import password_hash, row, rows, run
 from .models import DTO
+from .reclamation_read import plan_detail, plan_page
 
 Identifier = Annotated[str, Path(pattern=r'^[0-9a-f]{32}$')]
 
@@ -46,6 +48,27 @@ def register_admin(app, db, identity, error, clock, operators, default_quota, re
         if actor['user_id'] not in operators:
             raise error(403, 'OPERATIONS_FORBIDDEN')
         return actor['user_id']
+
+    @app.get('/sync/v1/admin/reclamation/plans')
+    def reclamation_plans(limit: int = Query(default=20, ge=1, le=100),
+                          before: str | None = Query(default=None, pattern=r'^[0-9]{1,16}:[0-9a-f]{32}$'),
+                          vault_id: str | None = Query(default=None, pattern=r'^[0-9a-f]{32}$'),
+                          state: Literal['preview', 'running', 'complete'] | None = None,
+                          authorization: str = Header(default='')):
+        with db.read_only() as conn:
+            authorize(conn, authorization)
+            if before and int(before.split(':')[0]) > 2**53-1:
+                raise error(422, 'INVALID_REQUEST')
+            return plan_page(conn, observed_at=int(clock()), limit=limit, before=before, vault_id=vault_id, state=state)
+
+    @app.get('/sync/v1/admin/reclamation/plans/{plan_id}')
+    def reclamation_plan(plan_id: Identifier, authorization: str = Header(default='')):
+        with db.read_only() as conn:
+            authorize(conn, authorization)
+            result = plan_detail(conn, plan_id, observed_at=int(clock()))
+            if result is None:
+                raise error(404, 'GC_PLAN_NOT_FOUND')
+            return result
 
     def account(conn, user_id):
         user = row(conn, 'SELECT id,username FROM users WHERE id=:id', id=user_id)

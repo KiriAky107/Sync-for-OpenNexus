@@ -357,9 +357,11 @@ def probe(work: Path):
         report['checks'].append('restored_account_policies_receipts_revocation_and_fresh_two_device_sync')
 
         stage = 'protected_reclamation_with_real_providers'
-        gc_backup = protected_reclamation(repo, work, journal, source, original_objects,
+        gc_backup, gc_readonly = protected_reclamation(repo, work, journal, source, original_objects,
                                           source_url, endpoint, vault_id, base, auth, files)
+        report['reclamation_readonly'] = gc_readonly
         report['checks'].append('reviewed_gc_preserves_history_and_recovers_lost_s3_delete_reply')
+        report['checks'].append('operator_readonly_gc_snapshot_and_pending_receipts_preserve_real_providers')
 
         stage = 'empty_target_and_corruption_gates'
         cli(*common, *source_settings, 'restore', '--directory', str(snapshot), expected='RESTORE_DATABASE_NOT_EMPTY')
@@ -434,7 +436,13 @@ def protected_reclamation(repo, work, journal, db, objects, url, endpoint, vault
     from sync_server.reclamation import apply
     content = 'unreferenced recovery bytes 中文\r\n'.encode()
     sha = hashlib.sha256(content).hexdigest()
-    with TestClient(create_app(db, objects, work/'gc-staging')) as client:
+    with db.read_only() as conn:
+        operator = conn.execute(text("SELECT id FROM users WHERE username='probe-owner'")).scalar_one()
+    readonly_proofs = []
+    with TestClient(create_app(db, objects, work/'gc-staging', operator_user_ids=[operator])) as client:
+        member = checked(client, 'POST', '/sync/v1/auth/sessions', json={
+            'username':'provisioned-member', 'password':'controlled-provisioned-password', 'device_name':'gc-read-only'})
+        ordinary = {'Authorization':'Bearer '+member['access_token']}
         info = checked(client, 'POST', base+'/uploads', headers=auth, json={'content_hash':sha,'size':len(content)})
         path = base+'/uploads/'+info['upload_id']
         checked(client,'PUT',path+'?offset=0',headers=auth,content=content)
@@ -449,6 +457,7 @@ def protected_reclamation(repo, work, journal, db, objects, url, endpoint, vault
         plan = cli(*settings,'gc-preview','--vault-id',vault_id,'--directory',str(backup))
         if [item['hash'] for item in plan['preview']['candidates']] != [sha] or plan['preview']['protected_counts'].get('revision') != 3:
             raise ProbeFailure('GC_REFERENCE_PROTECTION_CHANGED')
+        readonly_proofs.append(reclamation_read_probe(client, db, objects, backup, auth, ordinary, plan))
         real_delete=objects.delete
         def lose_delete_reply(key):
             real_delete(key)
@@ -465,6 +474,7 @@ def protected_reclamation(repo, work, journal, db, objects, url, endpoint, vault
         original=cli(*settings,'gc-status','--plan-id',plan['plan_id'])
         if original['pending_objects'] != 1:
             raise ProbeFailure('GC_READONLY_RECONCILIATION_CHANGED')
+        readonly_proofs.append(reclamation_read_probe(client, db, objects, backup, auth, ordinary, original))
         result=cli(*settings,'gc-apply','--directory',str(backup),'--plan-id',plan['plan_id'],'--confirm-plan',plan['plan_id'])
         if result['state'] != 'complete' or result['reclaimed_objects'] != 1 or result['reclaimed_bytes'] != len(content):
             raise ProbeFailure('GC_RESUME_RESULT_CHANGED')
@@ -480,7 +490,56 @@ def protected_reclamation(repo, work, journal, db, objects, url, endpoint, vault
             raise ProbeFailure('GC_RECOVERY_BYTES_CHANGED')
         if checked(client,'GET',base+'/changes',headers=auth)['cursor'] != 3:
             raise ProbeFailure('GC_PRUNED_REVISION_CURSOR')
-    return backup
+    return backup, {'passed':True, 'provider':'PostgreSQL/S3', 'snapshots':readonly_proofs,
+                    'permanent_history_preserved':True, 'new_http_mutations':0}
+
+
+def reclamation_read_probe(client, db, objects, backup, auth, ordinary, original):
+    """Read a real CLI-created plan while protecting the actual recovery objects."""
+    from sqlalchemy.exc import DBAPIError
+    from sync_server.database import rows
+    base = '/sync/v1/admin/reclamation/plans'
+    def ledger():
+        with db.read_only() as conn:
+            return {table:[dict(item) for item in rows(conn, 'SELECT * FROM '+table+' ORDER BY 1')]
+                    for table in ['reclamation_plans','reclamation_objects','objects','revisions','vaults','sessions']}
+    before = ledger()
+    backup_bytes = {str(path.relative_to(backup)):hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in backup.rglob('*') if path.is_file()}
+    io_methods = {name:getattr(objects,name) for name in ['get','put','delete']}
+    def forbid_io(*args, **kwargs): raise ProbeFailure('READONLY_GC_PERFORMED_OBJECT_IO')
+    try:
+        for name in io_methods: setattr(objects,name,forbid_io)
+        page = checked(client,'GET',base,headers=auth,params={'vault_id':original['vault_id'],'state':original['state']})
+        detail = checked(client,'GET',base+'/'+original['plan_id'],headers=auth)
+        checked(client,'GET',base,headers=ordinary,status=403)
+        checked(client,'GET',base+'/'+original['plan_id'],headers=ordinary,status=403)
+    finally:
+        for name, method in io_methods.items(): setattr(objects,name,method)
+    if not any(item['plan_id']==original['plan_id'] for item in page['items']):
+        raise ProbeFailure('READONLY_GC_PLAN_MISSING')
+    for field in ['preview','items','state','code','backup_manifest_sha256','reclaimed_bytes','reclaimed_objects','protected_objects','pending_objects']:
+        if detail[field] != original[field]: raise ProbeFailure('READONLY_GC_ORIGINAL_RECEIPT_CHANGED')
+    if not detail['snapshot_only'] or ledger()!=before:
+        raise ProbeFailure('READONLY_GC_CHANGED_LEDGER')
+    if {str(path.relative_to(backup)):hashlib.sha256(path.read_bytes()).hexdigest() for path in backup.rglob('*') if path.is_file()} != backup_bytes:
+        raise ProbeFailure('READONLY_GC_CHANGED_BACKUP')
+    if not db.sqlite:
+        try:
+            with db.read_only() as conn:
+                if conn.exec_driver_sql('SHOW transaction_read_only').scalar() != 'on' or conn.exec_driver_sql('SHOW transaction_isolation').scalar() != 'repeatable read':
+                    raise ProbeFailure('READONLY_TRANSACTION_NOT_ISOLATED')
+                conn.exec_driver_sql('UPDATE reclamation_plans SET code=code WHERE false')
+            raise ProbeFailure('READONLY_TRANSACTION_ACCEPTED_WRITE')
+        except DBAPIError as error:
+            if getattr(error.orig,'sqlstate',None) != '25006': raise ProbeFailure('READONLY_TRANSACTION_WRONG_FAILURE') from None
+        with db.transaction() as conn:
+            if conn.exec_driver_sql('SHOW transaction_read_only').scalar() != 'off':
+                raise ProbeFailure('READONLY_TRANSACTION_LEAKED_POOL_STATE')
+    return {'plan_id':original['plan_id'], 'state':detail['state'], 'pending_objects':detail['pending_objects'],
+            'original_snapshot_and_receipts':True, 'ledger_and_backup_unchanged':True,
+            'object_io_calls':0, 'ordinary_account_forbidden':True,
+            'postgres_readonly_write_denial_and_pool_restoration':not db.sqlite}
 
 
 def main():

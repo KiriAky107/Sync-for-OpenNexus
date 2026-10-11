@@ -72,6 +72,25 @@ class Database:
                 conn.rollback()
                 raise
 
+    @contextmanager
+    def read_only(self):
+        """A consistent read snapshot without writer locks or pooled state leaks."""
+        with self.engine.connect() as conn:
+            query_only = None
+            try:
+                if self.sqlite:
+                    query_only = conn.exec_driver_sql('PRAGMA query_only').scalar()
+                    conn.exec_driver_sql('PRAGMA query_only=ON')
+                    conn.exec_driver_sql('BEGIN')
+                else:
+                    conn.exec_driver_sql('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+                yield conn
+            finally:
+                conn.rollback()
+                if query_only is not None:
+                    conn.exec_driver_sql('PRAGMA query_only=' + ('ON' if query_only else 'OFF'))
+                    conn.commit()
+
     def add_user(self, username: str, password: str):
         if len(password) < 12:
             raise ValueError("密码至少 12 字符")
