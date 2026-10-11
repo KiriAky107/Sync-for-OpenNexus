@@ -1,9 +1,12 @@
 """仅删除过期的上传暂存；引用的历史对象永远不会是 GC'd。"""
 import re
 import time
+import uuid
 from pathlib import Path
 from .database import row, rows, run
 from .usage import disposition
+
+HISTORY_LIMIT = 1000
 
 
 def cleanup_expired_uploads(db, staging: Path, *, now=None, limit=500):
@@ -43,4 +46,12 @@ def cleanup_expired_uploads(db, staging: Path, *, now=None, limit=500):
             total_failures=maintenance_summary.total_failures+:failures""",
             now=now, finished=now+duration//1000, duration=duration, selected=len(expired), removed=removed, released=released,
             filesystem=filesystem_failures, metadata=metadata_failures, failures=filesystem_failures+metadata_failures)
+        # The summary upsert serializes this append/prune in the same transaction.
+        # Idle polling does not crowd actual attempts out of the bounded history.
+        if expired or filesystem_failures or metadata_failures:
+            run(conn, "INSERT INTO maintenance_history VALUES (:id,'uploads',:started,:finished,:duration,:selected,:removed,:released,:filesystem,:metadata)",
+                id=uuid.uuid4().hex, started=now, finished=now+duration//1000, duration=duration,
+                selected=len(expired), removed=removed, released=released,
+                filesystem=filesystem_failures, metadata=metadata_failures)
+            run(conn, 'DELETE FROM maintenance_history WHERE id NOT IN (SELECT id FROM maintenance_history ORDER BY finished_at DESC,id DESC LIMIT :limit)', limit=HISTORY_LIMIT)
     return {"expired_uploads_removed": removed, 'released_bytes':released, 'filesystem_failures':filesystem_failures, 'metadata_failures':metadata_failures, 'duration_ms':duration}

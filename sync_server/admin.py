@@ -42,12 +42,15 @@ class DefaultQuota(Operation):
     quota: StrictInt = Field(ge=0, le=2**53-1)
 
 
-def register_admin(app, db, identity, error, clock, operators, default_quota, readiness):
+def register_admin(app, db, identity, error, clock, operators, default_quota, readiness, operations_path=None):
     def authorize(conn, authorization, *, observe=True):
         actor = identity(conn, authorization, observe=observe)
         if actor['user_id'] not in operators:
             raise error(403, 'OPERATIONS_FORBIDDEN')
         return actor['user_id']
+
+    from .observability import register_observability
+    register_observability(app, db, authorize, error, clock, operations_path)
 
     @app.get('/sync/v1/admin/reclamation/plans')
     def reclamation_plans(limit: int = Query(default=20, ge=1, le=100),

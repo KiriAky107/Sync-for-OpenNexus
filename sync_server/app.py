@@ -204,7 +204,7 @@ def create_app(db: Database, objects, staging: Path, *, quota=1024**3, clock=tim
     readiness = Readiness(readiness_probe, cache_seconds=1)
     app.state.readiness = readiness
     from .admin import register_admin
-    register_admin(app,db,identity,SyncError,clock,operators,quota,readiness)
+    register_admin(app,db,identity,SyncError,clock,operators,quota,readiness,operations_path)
     from .device_progress import register_device_progress
     register_device_progress(app,db,identity,SyncError,clock)
     from sqlalchemy.exc import SQLAlchemyError

@@ -1,7 +1,7 @@
 """The production probe must refuse remote or preexisting resources before IO."""
 import pytest
 
-from tools.operations_probe import ProbeFailure, administration_seed, administration_restored, configuration, probe, served_protocol, device_progress_probe
+from tools.operations_probe import ProbeFailure, administration_seed, administration_restored, configuration, probe, served_protocol, device_progress_probe, observability_probe
 from test_admin import admin
 
 
@@ -92,3 +92,12 @@ def test_progress_probe_reads_two_real_device_observations_without_updating_them
     assert proof['readonly_observations_unchanged'] and proof['rejected_cursor_unchanged']
     assert proof['writer_committed_sequence']==3 and proof['reader_offered_sequence']==2
     assert proof['reader_committed_sequence'] is None and not proof['client_application_confirmed']
+
+
+def test_operations_observation_probe_has_no_writes_or_object_io(admin):
+    client,db,store,_,_,auth,*_=admin
+    proof=observability_probe(client,db,store,auth)
+    assert proof['readonly_rows_unchanged'] and proof['object_io_calls']==0
+    assert proof['history_retention_limit']==1000 and proof['redacted_export']
+    assert proof['independent_archive_association_unknown']
+    assert not proof['backup_and_verify_receipts_present']

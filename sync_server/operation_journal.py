@@ -46,6 +46,7 @@ class OperationJournal:
                 raise OperationsError("OPERATIONS_SCHEMA_INCOMPATIBLE")
             with conn:
                 conn.execute(SCHEMA)
+                conn.execute('CREATE INDEX IF NOT EXISTS operation_latest ON operation_receipts(kind,state,finished_at,sequence)')
                 conn.execute("PRAGMA user_version=1")
             return conn
         except BaseException:
@@ -116,21 +117,49 @@ class OperationJournal:
                                     (before if before is not None else 2**63 - 1, limit + 1)).fetchall()
             items = []
             for row in rows[:limit]:
-                kind, state, code = row["kind"], row["state"], row["code"]
-                valid = kind in KINDS and state in {"unfinished", "succeeded", "failed"} and (
-                    code == "OPERATION_UNFINISHED" if state == "unfinished" else code == SUCCESS[kind] if state == "succeeded" else code in ERRORS)
-                if not valid or not isinstance(row["id"], str) or len(row["id"]) != 32 or any(char not in '0123456789abcdef' for char in row["id"]):
-                    raise OperationsError("OPERATIONS_RECORD_INVALID")
-                if any(value is not None and (not isinstance(value, int) or not 0 <= value <= 253402300799999) for value in (row["started_at"], row["finished_at"])) or row["started_at"] is None or (row["finished_at"] is None) != (state == "unfinished"):
-                    raise OperationsError("OPERATIONS_RECORD_INVALID")
-                item = {"sequence": row["sequence"], "operation_id": row["id"], "kind": kind, "state": state, "code": code,
-                        "started_utc": _utc(row["started_at"]), "finished_utc": _utc(row["finished_at"])}
-                for name in COUNTS:
-                    value = row[name]
-                    if value is not None and (not isinstance(value, int) or not 0 <= value <= 2**63 - 1):
-                        raise OperationsError("OPERATIONS_RECORD_INVALID")
-                    item[name] = value
-                items.append(item)
+                items.append(self._record(row))
             return {"schema": 1, "items": items, "next_before": items[-1]["sequence"] if len(rows) > limit else None}
         except (sqlite3.Error, OSError, ValueError, OverflowError) as error:
             raise OperationsError("OPERATIONS_STATUS_UNAVAILABLE") from error
+
+    @staticmethod
+    def _record(row):
+        kind, state, code = row['kind'], row['state'], row['code']
+        valid = kind in KINDS and state in {'unfinished', 'succeeded', 'failed'} and (
+            code == 'OPERATION_UNFINISHED' if state == 'unfinished' else code == SUCCESS[kind] if state == 'succeeded' else code in ERRORS)
+        if not valid or not isinstance(row['id'], str) or len(row['id']) != 32 or any(char not in '0123456789abcdef' for char in row['id']):
+            raise OperationsError('OPERATIONS_RECORD_INVALID')
+        if any(value is not None and (not isinstance(value, int) or not 0 <= value <= 253402300799999) for value in (row['started_at'], row['finished_at'])) or row['started_at'] is None or (row['finished_at'] is None) != (state == 'unfinished'):
+            raise OperationsError('OPERATIONS_RECORD_INVALID')
+        item = {'sequence': row['sequence'], 'operation_id': row['id'], 'kind': kind, 'state': state, 'code': code,
+                'started_utc': _utc(row['started_at']), 'finished_utc': _utc(row['finished_at'])}
+        for name in COUNTS:
+            value = row[name]
+            if value is not None and (not isinstance(value, int) or not 0 <= value <= 2**63-1):
+                raise OperationsError('OPERATIONS_RECORD_INVALID')
+            item[name] = value
+        return item
+
+    def reminders(self, *, now_ms: int, threshold_seconds=86400):
+        """Read separate successful receipts, never infer archive association."""
+        empty = {'backup': None, 'verify': None, 'unfinished_operations': 0, 'failed_operations': 0}
+        if not self.path.exists(): return empty
+        try:
+            with closing(sqlite3.connect(self.path.as_uri()+'?mode=ro', uri=True, timeout=.5)) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute('BEGIN')
+                if conn.execute('PRAGMA user_version').fetchone()[0] != 1:
+                    raise OperationsError('OPERATIONS_SCHEMA_INCOMPATIBLE')
+                found = {}
+                for kind in ('backup', 'verify'):
+                    row = conn.execute("SELECT * FROM operation_receipts WHERE kind=? AND state='succeeded' ORDER BY finished_at DESC,sequence DESC LIMIT 1", (kind,)).fetchone()
+                    if row is None: found[kind] = None; continue
+                    receipt = self._record(row)
+                    elapsed = (now_ms-row['finished_at'])//1000
+                    found[kind] = {'finished_utc': receipt['finished_utc'], 'seconds_ago': max(0, elapsed),
+                        'state': 'clock_ahead' if elapsed < 0 else 'stale_receipt' if elapsed > threshold_seconds else 'recent_receipt',
+                        'recorded_backup_age_seconds': receipt['backup_age_seconds']}
+                counts = conn.execute("SELECT SUM(CASE WHEN state='unfinished' THEN 1 ELSE 0 END), SUM(CASE WHEN state='failed' THEN 1 ELSE 0 END) FROM operation_receipts").fetchone()
+                return {**found, 'unfinished_operations': int(counts[0] or 0), 'failed_operations': int(counts[1] or 0)}
+        except (sqlite3.Error, OSError, ValueError, OverflowError) as error:
+            raise OperationsError('OPERATIONS_STATUS_UNAVAILABLE') from error

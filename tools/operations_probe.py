@@ -283,7 +283,8 @@ def probe(work: Path):
             ('experiments/结果.csv', '名称,数量\r\n中文,7\r\n'.encode()),
         ]
         stage = 'real_provider_protocol'
-        with TestClient(create_app(source, original_objects, work/'source-staging')) as client:
+        with TestClient(create_app(source, original_objects, work/'source-staging',
+                                   operator_user_ids=[administration['operator']], operations_path=journal)) as client:
             if checked(client, 'GET', '/ready')['schema'] != 1:
                 raise ProbeFailure('DEPENDENCIES_NOT_READY')
             sessions = [checked(client, 'POST', '/sync/v1/auth/sessions', json={
@@ -323,6 +324,21 @@ def probe(work: Path):
             checked(client, 'DELETE', '/sync/v1/devices/'+sessions[1]['device_id'], headers=auth, status=204)
             checked(client, 'GET', base+'/devices/progress', headers=second_auth, status=401)
             progress_snapshot = checked(client, 'GET', base+'/devices/progress', headers=auth)['items']
+            stage = 'actual_upload_cleanup_history'
+            from sync_server.database import rows, run
+            from sync_server.maintenance import cleanup_expired_uploads
+            expired = checked(client,'POST',base+'/uploads',headers=auth,
+                              json={'content_hash':hashlib.sha256(b'owned-expired-upload').hexdigest(),'size':7})['upload_id']
+            checked(client,'PUT',base+'/uploads/'+expired+'?offset=0',headers=auth,content=b'partial')
+            with source.transaction() as conn:
+                run(conn,'UPDATE uploads SET expires=0 WHERE id=:id',id=expired)
+            cleanup = cleanup_expired_uploads(source,work/'source-staging')
+            if cleanup['expired_uploads_removed'] != 1 or cleanup['released_bytes'] != 7:
+                raise ProbeFailure('CLEANUP_HISTORY_ACTUAL_RESULT_CHANGED')
+            with source.read_only() as conn:
+                cleanup_history = [dict(r) for r in rows(conn,'SELECT * FROM maintenance_history ORDER BY id')]
+            if len(cleanup_history)!=1 or cleanup_history[0]['removed']!=1:
+                raise ProbeFailure('CLEANUP_HISTORY_NOT_RECORDED')
         report['checks'].append('confirmed_upload_and_revision_receipts')
         report['checks'].append('sampled_authentication_confirmed_commit_and_generated_page_are_distinct')
 
@@ -356,6 +372,9 @@ def probe(work: Path):
                        for name in ['authenticated_at','committed_sequence','committed_at','offered_sequence','offered_at'])):
                 raise ProbeFailure('LEGACY_BACKUP_OBSERVATIONS_NOT_UNKNOWN')
         report['device_progress']['legacy_backup_restores_unknown'] = True
+        with legacy.read_only() as conn:
+            if rows(conn,'SELECT * FROM maintenance_history'):
+                raise ProbeFailure('LEGACY_CLEANUP_HISTORY_NOT_UNKNOWN')
         report['checks'].append('legacy_backup_without_observation_tables_restores_into_empty_providers')
 
         stage = 'restored_protocol_and_authority'
@@ -387,6 +406,19 @@ def probe(work: Path):
         stage = 'restored_management_and_fresh_sync'
         report['administration'] = administration_restored(restored, restored_objects, work, administration)
         report['checks'].append('restored_account_policies_receipts_revocation_and_fresh_two_device_sync')
+
+        stage = 'bounded_operations_observations'
+        with restored.read_only() as conn:
+            if [dict(r) for r in rows(conn,'SELECT * FROM maintenance_history ORDER BY id')] != cleanup_history:
+                raise ProbeFailure('RESTORED_CLEANUP_HISTORY_CHANGED')
+        with TestClient(create_app(source,original_objects,work/'source-observation-staging',
+                                  operations_path=journal,operator_user_ids=[administration['operator']])) as client:
+            report['observability'] = observability_probe(client,source,original_objects,auth)
+        if not report['observability']['backup_and_verify_receipts_present']:
+            raise ProbeFailure('ACTUAL_CLI_OBSERVATION_RECEIPTS_MISSING')
+        report['observability'].update(cleanup_history_restored=True,legacy_backup_history_empty=True,
+                                        actual_cli_and_providers=True)
+        report['checks'].append('bounded_cleanup_history_separate_backup_receipts_redacted_readonly_export')
 
         stage = 'protected_reclamation_with_real_providers'
         gc_backup, gc_readonly = protected_reclamation(repo, work, journal, source, original_objects,
@@ -532,11 +564,11 @@ def legacy_progress_snapshot(source, destination):
     shutil.copytree(source, destination)
     database = destination/'database.jsonl'
     records = [json.loads(line) for line in database.read_text('utf-8').splitlines()]
-    records = [item for item in records if item['table'] not in {'device_activity','device_progress'}]
+    records = [item for item in records if item['table'] not in {'device_activity','device_progress','maintenance_history'}]
     database.write_text(''.join(json.dumps(item,ensure_ascii=False)+'\n' for item in records),'utf-8')
     manifest = json.loads((destination/'manifest.json').read_text('utf-8'))
     manifest['database_sha256'] = sha256_file(database)
-    for table in ['device_activity','device_progress']:
+    for table in ['device_activity','device_progress','maintenance_history']:
         manifest['database_rows'].pop(table, None)
     (destination/'manifest.json').write_text(json.dumps(manifest)+'\n','utf-8')
 
@@ -619,6 +651,37 @@ def reclamation_read_probe(client, db, objects, backup, auth, ordinary, original
             'original_snapshot_and_receipts':True, 'ledger_and_backup_unchanged':True,
             'object_io_calls':0, 'ordinary_account_forbidden':True,
             'postgres_readonly_write_denial_and_pool_restoration':not db.sqlite}
+
+
+def observability_probe(client, db, objects, auth):
+    """Verify the new read surface, not a second backup or archive validation."""
+    from sync_server.database import rows
+    def original():
+        with db.read_only() as conn:
+            return {table:[dict(r) for r in rows(conn,'SELECT * FROM '+table+' ORDER BY 1')]
+                    for table in ('maintenance_history','objects','revisions','vaults','device_activity','device_progress')}
+    before=original()
+    methods={name:getattr(objects,name) for name in ('get','put')}
+    if hasattr(objects,'delete'): methods['delete']=objects.delete
+    def reject_io(*args,**kwargs): raise ProbeFailure('OBSERVABILITY_CALLED_OBJECT_IO')
+    try:
+        for name in methods: setattr(objects,name,reject_io)
+        observed=checked(client,'GET','/sync/v1/admin/observability',headers=auth)
+        exported=checked(client,'GET','/sync/v1/admin/observability/export',headers=auth)
+    finally:
+        for name,method in methods.items(): setattr(objects,name,method)
+    if before!=original() or observed['history']['retention_limit']!=1000 or observed['cache_seconds']!=0:
+        raise ProbeFailure('OBSERVABILITY_CHANGED_DATABASE')
+    if not exported['redacted'] or exported['backup_receipts']['archive_association_known']:
+        raise ProbeFailure('OBSERVABILITY_EXPORT_SCOPE_CHANGED')
+    serialized=json.dumps(exported)
+    if any(item['id'] in serialized for item in observed['history']['items']):
+        raise ProbeFailure('OBSERVABILITY_EXPORTED_IDENTIFIERS')
+    receipts=observed['backup_receipts']
+    return {'passed':True,'readonly_rows_unchanged':True,'object_io_calls':0,'history_retention_limit':1000,
+            'capacity_basis':observed['capacity']['basis'],'redacted_export':True,
+            'independent_archive_association_unknown':True,
+            'backup_and_verify_receipts_present':receipts['backup'] is not None and receipts['verify'] is not None}
 
 
 def main():

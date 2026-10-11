@@ -32,6 +32,8 @@ SCHEMA = [
     "CREATE TABLE IF NOT EXISTS admin_receipts (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, kind TEXT NOT NULL, target_id TEXT NOT NULL, input_salt TEXT NOT NULL, fingerprint TEXT NOT NULL, response TEXT NOT NULL, confirmed_at BIGINT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS device_activity (device_id TEXT PRIMARY KEY, authenticated_at BIGINT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS device_progress (device_id TEXT NOT NULL, vault_id TEXT NOT NULL, committed_sequence BIGINT, committed_at BIGINT, offered_sequence BIGINT, offered_at BIGINT, PRIMARY KEY(device_id,vault_id))",
+    "CREATE TABLE IF NOT EXISTS maintenance_history (id TEXT PRIMARY KEY, kind TEXT NOT NULL, started_at BIGINT NOT NULL, finished_at BIGINT NOT NULL, duration_ms BIGINT NOT NULL, selected BIGINT NOT NULL, removed BIGINT NOT NULL, released_bytes BIGINT NOT NULL, filesystem_failures BIGINT NOT NULL, metadata_failures BIGINT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS maintenance_history_cursor ON maintenance_history (finished_at,id)",
 ]
 
 
