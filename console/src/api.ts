@@ -1,3 +1,4 @@
+import { parseObservability, parseRedactedExport, validCleanupCursor } from './observability.ts'
 export interface ServiceStatus {
   health: boolean
   ready: boolean
@@ -400,6 +401,12 @@ export class SyncApi {
     return this.request<AdminDetails>(`/sync/v1/admin/accounts/${encodeURIComponent(user)}?${query}`)
   }
   adminDiagnostics() { return this.request<AdminDiagnostics>('/sync/v1/admin/diagnostics') }
+  async observability(before: string | null = null) {
+    if (before !== null && !validCleanupCursor(before)) throw new Error('INVALID_REQUEST')
+    const query = new URLSearchParams({ limit: '20' }); if (before) query.set('before', before)
+    return parseObservability(await this.request<unknown>('/sync/v1/admin/observability?' + query), before)
+  }
+  async diagnosticExport() { return parseRedactedExport(await this.request<unknown>('/sync/v1/admin/observability/export')) }
   async deviceProgress(vault: string, before: string | null = null, account?: string) {
     if (!planId.test(vault) || before !== null && !planId.test(before) || account !== undefined && !planId.test(account)) throw new Error('INVALID_REQUEST')
     const query = new URLSearchParams({ limit: '20' })

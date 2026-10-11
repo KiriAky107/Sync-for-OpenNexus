@@ -286,6 +286,13 @@ footer { width: min(1280px, calc(100% - 48px)); min-height: 62px; margin: 0 auto
 .reclamation-detail dl { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr); gap: 8px 16px; }
 .reclamation-detail dd { margin: 0; overflow-wrap: anywhere; }
 .reclamation-detail dt { color: var(--muted); }
+.observability-statistics { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 8px 16px; }
+.observability-statistics dt { color: var(--muted); }
+.observability-statistics dd { margin: 0; overflow-wrap: anywhere; }
+.operations-overview p, .operations-overview strong, .diagnostic-export { overflow-wrap: anywhere; }
+.diagnostic-export { margin-top: 16px; }
+.diagnostic-export pre { max-height: 350px; overflow: auto; white-space: pre-wrap; font-size: 12px; }
+@media (max-width: 450px) { .observability-statistics { grid-template-columns: minmax(0, 1fr); gap: 3px; } .observability-statistics dd { margin-bottom: 10px; } .operations-overview .surface-heading { flex-wrap: wrap; gap: 12px; } }
 .reclamation-items { list-style: none; padding: 0; }
 .reclamation-items li { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .reclamation-items code, .reclamation-surface small, .reclamation-surface p { overflow-wrap: anywhere; }

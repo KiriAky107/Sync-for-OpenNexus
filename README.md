@@ -121,7 +121,11 @@ Fix the initial credentials, resolve an operator's stable account ID with `opera
 1. In **Service management**, choose **Create account**, enter the account and initial password, set its default quota, then review and confirm. Password fields are cleared before the request; the console never persists passwords or tokens.
 2. Select an account to page through its vaults and devices. Adjust a vault's quota or revoke a device after reviewing the fixed account and resource. Default quota changes affect future vaults.
 3. If the response is interrupted, choose **Query original result**. Retry with the original operation ID only after the server reports no receipt. The reviewed action stays fixed during reconciliation.
-4. Read classified dependency failures, accounting counts and cleanup results under **Service diagnostics**. Probe observation times and cache labels distinguish a recent read from a cached probe. Backup and recovery receipts appear below the deployment guide.
+4. Read classified dependency failures, accounting counts and cleanup results under **Service diagnostics**. Probe observation times and cache labels distinguish a recent read from a cached probe. **Operations overview** adds quota reminders and up to 1,000 cleanup attempts, paged 20 at a time; idle checks update the latest summary. Backup and recovery receipts also use bounded pages.
+5. Review the separate latest successful backup and verification receipts. Missing records or a future receipt time mean the age is unknown; the reminder threshold is 24 hours. These receipts do not establish that the displayed backup was verified. Before recovery, verify the selected archive with the CLI.
+6. Choose **Prepare redacted diagnostics**, inspect the JSON, then explicitly save it. The export contains times, counts, policies and states, including at most 20 cleanup records. It omits credentials, account/vault/device/operation identifiers, paths, object hashes and file content.
+
+Quota reminders count charged objects plus active upload reservations: 80% warns that a vault is nearing its quota, and reaching or exceeding the quota is reported separately. These counters describe the service ledger, rather than disk or S3 capacity. Database observations and the existing CLI receipt store are read independently without a response cache. Cleanup history retention does not trim file revisions; revision history remains permanent. The web overview provides read-only observations; backup, verification, restore and reclamation remain CLI operations.
 
 The console uses these same API routes:
 
@@ -135,6 +139,8 @@ The console uses these same API routes:
 | Revoke the selected account's device | `POST .../accounts/{user_id}/devices/{device_id}/revoke` with `operation_id` |
 | Reconcile an uncertain write | `GET /sync/v1/admin/operations/{operation_id}` |
 | Read classified diagnostics | `GET /sync/v1/admin/diagnostics` |
+| Read cleanup pages, capacity and separate backup/verification reminders | `GET /sync/v1/admin/observability?limit=20&before=FINISHED_AT:ID` |
+| Read the explicit redacted export | `GET /sync/v1/admin/observability/export` |
 
 Use a new 32-character lowercase hexadecimal operation ID for each reviewed action. If a response is lost, read that original ID first; a completed result never changes later passwords or quota settings. Creation does not return the password, and receipts retain no plaintext password. Defaults apply to new vaults; existing accounts retain the deployment default until explicitly configured. A vault's new quota cannot be below its charged objects plus active upload reservations.
 

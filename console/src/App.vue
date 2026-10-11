@@ -5,6 +5,7 @@ import VaultHistory from './VaultHistory.vue'
 import VaultStorage from './VaultStorage.vue'
 import AdminPanel from './AdminPanel.vue'
 import DeviceProgressPanel from './DeviceProgressPanel.vue'
+import OperationsOverview from './OperationsOverview.vue'
 
 const api = new SyncApi()
 const service = reactive<ServiceStatus>({ health: false, ready: false, protocol: 1, maxObjectSize: 100 * 1024 * 1024 })
@@ -33,6 +34,8 @@ const operations = ref<OperationsPage | null>(null)
 const operationsBusy = ref(false)
 const operationsError = ref('')
 const operationsCheckedAt = ref('')
+const operationsCursor = ref<number | null>(null)
+const operationsPrevious = ref<(number | null)[]>([])
 let operationsVersion = 0
 let accountVersion = 0
 const toast = ref('')
@@ -110,17 +113,20 @@ function operationError(code: string) {
     default: return '操作未完成，请核对服务和原操作结果。'
   }
 }
-async function refreshOperations(earlier = false) {
+async function refreshOperations(direction: 'first' | 'next' | 'previous' = 'first') {
   if (operationsBusy.value) return
   const version = ++operationsVersion
-  const before = earlier ? operations.value?.next_before : null
-  if (earlier && before == null) return
+  const before = direction === 'next' ? operations.value?.next_before : direction === 'previous' ? operationsPrevious.value.at(-1) : null
+  if (direction === 'next' && before == null || direction === 'previous' && !operationsPrevious.value.length) return
+  const stack = direction === 'next' ? [...operationsPrevious.value, operationsCursor.value]
+    : direction === 'previous' ? operationsPrevious.value.slice(0, -1) : []
   operationsBusy.value = true
   operationsError.value = ''
   try {
     const next = await api.operations(20, before)
     if (version !== operationsVersion || !signedIn.value) return
-    operations.value = earlier && operations.value ? { ...next, items: [...operations.value.items, ...next.items] } : next
+    operations.value = next
+    operationsCursor.value = before ?? null; operationsPrevious.value = stack
     operationsCheckedAt.value = new Date().toLocaleString()
   } catch (error) {
     if (version !== operationsVersion) return
@@ -150,6 +156,7 @@ function leaveConsole() {
   operationsBusy.value = false
   operationsError.value = ''
   operationsCheckedAt.value = ''
+  operationsCursor.value = null; operationsPrevious.value = []
   api.clear()
   signedIn.value = false
   password.value = ''
@@ -162,7 +169,7 @@ function leaveConsole() {
   operatorRole.value = false; roleError.value = ''; activeView.value = 'workspace'; adminPending.value = false
 }
 
-function leaveAdmin() { operatorRole.value = false; activeView.value = 'workspace'; operations.value = null; notify('管理员权限已不可用，请核对授权配置。', true) }
+function leaveAdmin() { operationsVersion++; operationsBusy.value = false; operationsCursor.value = null; operationsPrevious.value = []; operationsCheckedAt.value = ''; operationsError.value = ''; operatorRole.value = false; activeView.value = 'workspace'; operations.value = null; notify('管理员权限已不可用，请核对授权配置。', true) }
 
 async function signIn() {
   if (busy.value) return
@@ -380,6 +387,7 @@ onBeforeUnmount(() => {
       <DeviceProgressPanel :api="api" :vaults="vaults" :disabled="busy || historyPending || storagePending" @expired="leaveConsole" />
       </div>
       <AdminPanel v-if="operatorRole && activeView === 'admin'" :api="api" @pending="adminPending = $event" @expired="leaveConsole" @forbidden="leaveAdmin" @refreshed="refreshAccount" />
+      <OperationsOverview v-if="operatorRole && activeView === 'admin'" :api="api" :disabled="busy || adminPending" @expired="leaveConsole" @forbidden="leaveAdmin" />
       <section v-if="operatorRole && activeView === 'admin'" class="surface operations-surface" aria-labelledby="operations-title">
         <div class="surface-heading">
           <div><p>Operations</p><h2 id="operations-title">备份与恢复记录</h2></div>
@@ -400,7 +408,7 @@ onBeforeUnmount(() => {
             <small>操作 {{ item.operation_id }}</small>
           </article>
         </div>
-        <button v-if="operations?.next_before" class="secondary-button" type="button" :disabled="operationsBusy" @click="refreshOperations(true)">加载更早记录</button>
+        <nav v-if="operations || operationsPrevious.length" class="admin-pagination" aria-label="备份与恢复记录分页"><button class="secondary-button" :disabled="operationsBusy || !operationsPrevious.length" @click="refreshOperations('previous')">上一页</button><span>{{ operationsPrevious.length + 1 }}</span><button class="secondary-button" :disabled="operationsBusy || !operations?.next_before" @click="refreshOperations('next')">下一页</button></nav>
       </section>
       </template>
     </section>
