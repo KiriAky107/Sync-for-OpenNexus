@@ -266,3 +266,16 @@ footer { width: min(1280px, calc(100% - 48px)); min-height: 62px; margin: 0 auto
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
+.reclamation-surface { min-width: 0; }
+.reclamation-filters fieldset { border: 0; padding: 0; margin: 20px 0; display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.reclamation-filters label { flex: 1; min-width: 160px; }
+.reclamation-lookup { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 20px 0; }
+.reclamation-lookup label { flex: 1; min-width: 160px; }
+.reclamation-detail { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 18px; font-size: 12px; line-height: 1.8; }
+.reclamation-detail dl { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr); gap: 8px 16px; }
+.reclamation-detail dd { margin: 0; overflow-wrap: anywhere; }
+.reclamation-detail dt { color: var(--muted); }
+.reclamation-items { list-style: none; padding: 0; }
+.reclamation-items li { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.reclamation-items code, .reclamation-surface small, .reclamation-surface p { overflow-wrap: anywhere; }
+@media (max-width: 450px) { .reclamation-detail dl { grid-template-columns: minmax(0, 1fr); gap: 3px; } .reclamation-detail dd { margin-bottom: 10px; } .reclamation-surface .surface-heading { flex-wrap: wrap; gap: 12px; } }

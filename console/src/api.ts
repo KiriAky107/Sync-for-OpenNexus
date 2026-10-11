@@ -27,6 +27,78 @@ export interface Device {
   revoked: number | boolean
 }
 
+export type PlanState = 'preview' | 'running' | 'complete'
+export interface ReclamationSummary {
+  plan_id: string; vault_id: string; actor_id: string; state: PlanState; code: string
+  created: number; expires: number; finished: number | null; expired: boolean
+  sequence: number; charged_bytes: number; selected_objects: number; candidate_bytes: number
+  eligible_objects: number; eligible_bytes: number; has_more: boolean
+}
+export interface ReclamationPage {
+  schema_version: 1; snapshot_only: true; observed_at: number
+  items: ReclamationSummary[]; next_before: string | null
+}
+export interface ReclamationCandidate { hash: string; size: number; created: number }
+export interface ReclamationItem { hash: string; size: number; state: 'prepared' | 'reclaimed' | 'protected'; code: string; confirmed_at: number }
+export interface ReclamationDetail extends ReclamationSummary {
+  schema_version: 1; snapshot_only: true; observed_at: number; backup_manifest_sha256: string
+  preview: {
+    sequence: number; charged_bytes: number; grace_hours: number; cutoff: number
+    policy: { history_retention: 'indefinite'; automatic_reclamation: false; default_grace_hours: number; minimum_grace_hours: number; protection: string[]; completion_after_reclamation: string }
+    candidates: ReclamationCandidate[]; eligible_objects: number; candidate_bytes: number
+    eligible_bytes: number; protected_counts: Record<string, number>; has_more: boolean
+  }
+  items: ReclamationItem[]; reclaimed_bytes: number; reclaimed_objects: number; protected_objects: number; pending_objects: number
+}
+const planId = /^[0-9a-f]{32}$/, contentHash = /^[0-9a-f]{64}$/
+const planCursor = (value: unknown): value is string => typeof value === 'string' && /^[0-9]{1,16}:[0-9a-f]{32}$/.test(value) && Number.isSafeInteger(Number(value.split(':')[0]))
+const integer = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+const boundedText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
+function invalid(): never { throw new Error('INVALID_RESPONSE') }
+function summaryValid(value: unknown, observed: number): value is ReclamationSummary {
+  if (!object(value) || typeof value.plan_id !== 'string' || !planId.test(value.plan_id) || typeof value.vault_id !== 'string' || !planId.test(value.vault_id)) return false
+  if (!boundedText(value.actor_id, 256) || !boundedText(value.code, 80) || !['preview', 'running', 'complete'].includes(String(value.state))) return false
+  if (!['created', 'expires', 'sequence', 'charged_bytes', 'selected_objects', 'candidate_bytes', 'eligible_objects', 'eligible_bytes'].every(key => integer(value[key]))) return false
+  if (value.finished !== null && !integer(value.finished)) return false
+  return value.expired === ((value.expires as number) <= observed) && typeof value.has_more === 'boolean'
+    && (value.selected_objects as number) <= 100 && (value.eligible_objects as number) >= (value.selected_objects as number)
+    && (value.eligible_bytes as number) >= (value.candidate_bytes as number)
+    && value.has_more === ((value.eligible_objects as number) > (value.selected_objects as number))
+}
+export function parseReclamationPage(value: unknown, before: string | null = null): ReclamationPage {
+  if (!object(value) || value.schema_version !== 1 || value.snapshot_only !== true || !integer(value.observed_at) || !Array.isArray(value.items) || value.items.length > 20) invalid()
+  const items = value.items
+  if (!items.every(item => summaryValid(item, value.observed_at as number)) || new Set(items.map(item => item.plan_id)).size !== items.length) invalid()
+  const precedes = (created: number, id: string, cursor: string) => {
+    const [time, last] = cursor.split(':'); return created < Number(time) || created === Number(time) && id < last!
+  }
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!, previous = items[i-1]
+    if (before && !precedes(item.created, item.plan_id, before) || previous && !precedes(item.created, item.plan_id, `${previous.created}:${previous.plan_id}`)) invalid()
+  }
+  if (value.next_before !== null && (!planCursor(value.next_before) || !items.length || value.next_before !== `${items.at(-1)!.created}:${items.at(-1)!.plan_id}`)) invalid()
+  return value as unknown as ReclamationPage
+}
+export function parseReclamationDetail(value: unknown, expectedId: string): ReclamationDetail {
+  if (!object(value) || value.schema_version !== 1 || value.snapshot_only !== true || !integer(value.observed_at) || !summaryValid(value, value.observed_at) || value.plan_id !== expectedId) invalid()
+  if (typeof value.backup_manifest_sha256 !== 'string' || !contentHash.test(value.backup_manifest_sha256) || !object(value.preview)) invalid()
+  const preview = value.preview
+  if (!integer(preview.sequence) || !integer(preview.charged_bytes) || !integer(preview.cutoff) || typeof preview.grace_hours !== 'number' || !Number.isFinite(preview.grace_hours) || preview.grace_hours < 24 || preview.grace_hours > 24*3650) invalid()
+  if (!object(preview.policy) || preview.policy.history_retention !== 'indefinite' || preview.policy.automatic_reclamation !== false || !integer(preview.policy.default_grace_hours) || !integer(preview.policy.minimum_grace_hours) || !boundedText(preview.policy.completion_after_reclamation, 80) || !Array.isArray(preview.policy.protection) || preview.policy.protection.length > 32 || !preview.policy.protection.every(item => boundedText(item, 80))) invalid()
+  if (!object(preview.protected_counts) || Object.keys(preview.protected_counts).length > 32 || !Object.entries(preview.protected_counts).every(([key, count]) => key.length <= 80 && integer(count))) invalid()
+  if (!Array.isArray(preview.candidates) || preview.candidates.length !== value.selected_objects || !preview.candidates.every(item => object(item) && typeof item.hash === 'string' && contentHash.test(item.hash) && integer(item.size) && integer(item.created))) invalid()
+  if (new Set(preview.candidates.map(item => item.hash)).size !== preview.candidates.length) invalid()
+  for (const key of ['sequence', 'charged_bytes', 'candidate_bytes', 'eligible_objects', 'eligible_bytes', 'has_more']) if (preview[key] !== value[key as keyof ReclamationSummary]) invalid()
+  if (preview.candidates.reduce((sum, item) => sum + item.size, 0) !== value.candidate_bytes) invalid()
+  if (!Array.isArray(value.items) || value.items.length > 100) invalid()
+  const candidates = new Map(preview.candidates.map(item => [item.hash, item.size]))
+  if (!value.items.every(item => object(item) && typeof item.hash === 'string' && candidates.get(item.hash) === item.size && integer(item.size) && ['prepared', 'reclaimed', 'protected'].includes(String(item.state)) && boundedText(item.code, 80) && integer(item.confirmed_at)) || new Set(value.items.map(item => item.hash)).size !== value.items.length) invalid()
+  for (const [field, state] of [['reclaimed_objects', 'reclaimed'], ['protected_objects', 'protected'], ['pending_objects', 'prepared']]) if (value[field!] !== value.items.filter(item => item.state === state).length) invalid()
+  if (!integer(value.reclaimed_bytes) || value.reclaimed_bytes !== value.items.filter(item => item.state === 'reclaimed').reduce((sum, item) => sum + item.size, 0)) invalid()
+  return value as unknown as ReclamationDetail
+}
+
 export interface OperatorAccess { operator: true; user_id: string; deployment_default_quota: number }
 export interface AdminAccount { id: string; username: string; default_quota: number; policy_revision: number }
 export interface AdminAccounts { items: AdminAccount[]; next_before: string | null; confirmed_at: number }
@@ -294,6 +366,20 @@ export class SyncApi {
     return this.request<AdminDetails>(`/sync/v1/admin/accounts/${encodeURIComponent(user)}?${query}`)
   }
   adminDiagnostics() { return this.request<AdminDiagnostics>('/sync/v1/admin/diagnostics') }
+  async reclamationPlans(options: { before?: string | null; vault?: string; state?: PlanState | '' } = {}) {
+    if (options.before && !planCursor(options.before) || options.vault && !planId.test(options.vault) || options.state && !['preview', 'running', 'complete'].includes(options.state)) throw new Error('INVALID_REQUEST')
+    const query = new URLSearchParams({ limit: '20' })
+    if (options.before) query.set('before', options.before)
+    if (options.vault) query.set('vault_id', options.vault)
+    if (options.state) query.set('state', options.state)
+    const page = parseReclamationPage(await this.request<unknown>('/sync/v1/admin/reclamation/plans?' + query), options.before ?? null)
+    if (page.items.some(item => options.vault && item.vault_id !== options.vault || options.state && item.state !== options.state)) invalid()
+    return page
+  }
+  async reclamationPlan(id: string) {
+    if (!planId.test(id)) throw new Error('INVALID_REQUEST')
+    return parseReclamationDetail(await this.request<unknown>('/sync/v1/admin/reclamation/plans/' + id), id)
+  }
   createAccount(body: Readonly<AccountCreate>) {
     return this.request<AdminReceipt>('/sync/v1/admin/accounts', { method: 'POST', body: JSON.stringify(body) })
   }
