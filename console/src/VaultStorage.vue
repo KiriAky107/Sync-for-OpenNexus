@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { t, formatDate, formatNumber } from './locale.ts'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { type SyncApi, type PendingUpload, type UploadPage, type UploadResult, type Usage, type Vault } from './api'
 
 const props = defineProps<{ api: SyncApi; vaults: Vault[] }>()
 const emit = defineEmits<{ refreshed: []; expired: []; pending: [value: boolean] }>()
 const vaultId = ref(''), busy = ref(false), mutationBusy = ref(false), failure = ref(''), notice = ref('')
+const failureHint = ref('')
 const usage = shallowRef<Usage | null>(null), uploads = shallowRef<UploadPage | null>(null)
 const selected = shallowRef<PendingUpload | null>(null), acknowledged = ref(false)
 const intent = shallowRef<Readonly<{ vault: string; upload: string }> | null>(null)
@@ -20,8 +22,9 @@ function bytes(value: number) {
   while (value >= 1024 && unit < 3) { value /= 1024; unit++ }
   return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`
 }
-const time = (value: number) => new Date(value*1000).toLocaleString('zh-CN', { hour12: false })
+const time = (value: number) => formatDate(value*1000)
 function errorText(error: unknown): string {
+  failureHint.value = ''
   if (!props.api.signedIn) { emit('expired'); return '会话已失效，请重新登录。' }
   const code = error instanceof Error ? error.message : ''
   if (code === 'STAGING_UNAVAILABLE') return '暂存目录不可写，上传记录仍可核对与重试。'
@@ -86,7 +89,7 @@ async function cancel(retry = false): Promise<void> {
   mutationBusy.value = true; failure.value = ''; receipt.value = null
   try { const result = await props.api.cancelUpload(operation.vault, operation.upload); if (alive && intent.value === operation) await finish(result) }
   catch (error) {
-    if (alive && intent.value === operation) failure.value = errorText(error) + ' 请先查询原操作结果，再决定是否重试。'
+    if (alive && intent.value === operation) { failure.value = errorText(error); failureHint.value = ' 请先查询原操作结果，再决定是否重试。' }
   } finally { if (alive) mutationBusy.value = false }
 }
 async function reconcile(): Promise<void> {
@@ -112,34 +115,34 @@ onBeforeUnmount(() => { alive = false; ticket++; emit('pending', false) })
 
 <template>
   <section class="surface storage-surface" aria-labelledby="storage-title">
-    <div class="surface-heading"><div><p>Storage &amp; uploads</p><h2 id="storage-title">用量与上传</h2></div><button class="secondary-button" :disabled="locked || !vaultId" @click="read(true)">刷新用量</button></div>
-    <label class="storage-vault">知识库<select v-model="vaultId" aria-label="用量知识库" :disabled="locked"><option v-for="vault in vaults" :key="vault.id" :value="vault.id">{{ vault.name }}</option></select></label>
-    <p v-if="!vaults.length" class="empty-state">创建知识库后可查看用量与上传。</p>
-    <p v-if="failure" class="operations-error" role="alert">{{ failure }}</p>
-    <p v-if="notice" class="storage-notice" role="status">{{ notice }}</p>
-    <p v-if="busy" role="status" class="operations-updated">正在确认账目与上传状态…</p>
+    <div class="surface-heading"><div><p>{{ t('Storage & uploads') }}</p><h2 id="storage-title">{{ t('用量与上传') }}</h2></div><button class="secondary-button" :disabled="locked || !vaultId" @click="read(true)">{{ t('刷新用量') }}</button></div>
+    <label class="storage-vault">{{ t('知识库') }}<select v-model="vaultId" :aria-label="t('用量知识库')" :disabled="locked"><option v-for="vault in vaults" :key="vault.id" :value="vault.id">{{ vault.name }}</option></select></label>
+    <p v-if="!vaults.length" class="empty-state">{{ t('创建知识库后可查看用量与上传。') }}</p>
+    <p v-if="failure" class="operations-error" role="alert">{{ t(failure) }}{{ t(failureHint) }}</p>
+    <p v-if="notice" class="storage-notice" role="status">{{ t(notice) }}</p>
+    <p v-if="busy" role="status" class="operations-updated">{{ t('正在确认账目与上传状态…') }}</p>
     <template v-if="usage">
-      <p class="operations-updated">{{ stale ? '上次读取，尚未刷新' : '服务器确认' }} · {{ time(usage.confirmed_at) }} · 修订 {{ usage.sequence }}</p>
-      <p v-if="!usage.accounting_matches" class="operations-error" role="alert">配额账目与已登记对象的总量不一致，请联系管理员核对。</p>
-      <p v-if="usage.reclamation_pending_objects" class="operations-error" role="alert">{{ usage.reclamation_pending_objects }} 个对象（{{ bytes(usage.reclamation_pending_bytes) }}）的回收结果待管理员核对，仍保留原账目。</p>
-      <div class="storage-ledger"><article><small>当前唯一对象</small><strong>{{ bytes(usage.current_object_bytes) }}</strong></article><article><small>仅历史引用</small><strong>{{ bytes(usage.historical_only_bytes) }}</strong></article><article><small>尚未引用对象</small><strong>{{ bytes(usage.unreferenced_object_bytes) }}</strong></article><article><small>有效上传预留</small><strong>{{ bytes(usage.reserved_bytes) }}</strong></article></div>
-      <p class="surface-intro">已计费 {{ bytes(usage.charged_bytes) }} / {{ bytes(usage.quota) }} · 可用 {{ bytes(usage.available_bytes) }}。{{ usage.active_files }} 个当前文件的逻辑大小为 {{ bytes(usage.logical_file_bytes) }}，相同对象只计费一次。历史无限保留。</p>
-      <progress class="storage-progress" :value="usage.charged_bytes + usage.reserved_bytes" :max="Math.max(1, usage.quota)" aria-label="对象及上传预留用量" />
-      <p class="surface-intro">未完成上传 {{ usage.pending_uploads }} 个 · 其中过期 {{ usage.expired_uploads }} 个。过期后不再预留配额，暂存删除失败时保留记录供重试。</p>
+      <p class="operations-updated">{{ stale ? t('上次读取，尚未刷新') : t('服务器确认') }} · {{ time(usage.confirmed_at) }} {{ t('· 修订') }} {{ usage.sequence }}</p>
+      <p v-if="!usage.accounting_matches" class="operations-error" role="alert">{{ t('配额账目与已登记对象的总量不一致，请联系管理员核对。') }}</p>
+      <p v-if="usage.reclamation_pending_objects" class="operations-error" role="alert">{{ usage.reclamation_pending_objects }} {{ t('个对象（') }}{{ bytes(usage.reclamation_pending_bytes) }}{{ t('）的回收结果待管理员核对，仍保留原账目。') }}</p>
+      <div class="storage-ledger"><article><small>{{ t('当前唯一对象') }}</small><strong>{{ bytes(usage.current_object_bytes) }}</strong></article><article><small>{{ t('仅历史引用') }}</small><strong>{{ bytes(usage.historical_only_bytes) }}</strong></article><article><small>{{ t('尚未引用对象') }}</small><strong>{{ bytes(usage.unreferenced_object_bytes) }}</strong></article><article><small>{{ t('有效上传预留') }}</small><strong>{{ bytes(usage.reserved_bytes) }}</strong></article></div>
+      <p class="surface-intro">{{ t('用量总述', { charged: bytes(usage.charged_bytes), quota: bytes(usage.quota), available: bytes(usage.available_bytes), files: formatNumber(usage.active_files), logical: bytes(usage.logical_file_bytes) }) }}</p>
+      <progress class="storage-progress" :value="usage.charged_bytes + usage.reserved_bytes" :max="Math.max(1, usage.quota)" :aria-label="t('对象及上传预留用量')" />
+      <p class="surface-intro">{{ t('上传总述', { pending: formatNumber(usage.pending_uploads), expired: formatNumber(usage.expired_uploads) }) }}</p>
     </template>
     <div v-if="uploads" class="storage-uploads">
-      <p v-if="!uploads.items.length" class="empty-state">本页没有未完成上传。</p>
+      <p v-if="!uploads.items.length" class="empty-state">{{ t('本页没有未完成上传。') }}</p>
       <article v-for="upload in uploads.items" :key="upload.id" class="storage-upload">
-        <div class="item-copy"><strong>{{ upload.device_name }}<span v-if="upload.device_id === api.deviceId"> · 当前设备</span></strong><small>{{ upload.id }}</small><span>确认 {{ bytes(upload.offset_bytes) }} / {{ bytes(upload.size) }} · 到期 {{ time(upload.expires) }}</span><small>{{ upload.state === 'expired' ? '已过期' : upload.state === 'device_revoked' ? '设备已撤销，不能续传' : '可由原设备续传' }}</small></div>
-        <button class="secondary-button" :disabled="locked || stale" @click="choose(upload)">查看 / 取消</button>
+        <div class="item-copy"><strong>{{ upload.device_name }}<span v-if="upload.device_id === api.deviceId"> {{ t('· 当前设备') }}</span></strong><small>{{ upload.id }}</small><span>{{ t('确认') }} {{ bytes(upload.offset_bytes) }} / {{ bytes(upload.size) }} {{ t('· 到期') }} {{ time(upload.expires) }}</span><small>{{ upload.state === 'expired' ? t('已过期') : upload.state === 'device_revoked' ? t('设备已撤销，不能续传') : t('可由原设备续传') }}</small></div>
+        <button class="secondary-button" :disabled="locked || stale" @click="choose(upload)">{{ t('查看 / 取消') }}</button>
       </article>
-      <nav class="storage-pagination" aria-label="上传分页"><button class="secondary-button" :disabled="locked || !previous.length" @click="previousPage">上一页</button><span>第 {{ previous.length + 1 }} 页</span><button class="secondary-button" :disabled="locked || !uploads.next_before" @click="nextPage">下一页</button></nav>
+      <nav class="storage-pagination" :aria-label="t('上传分页')"><button class="secondary-button" :disabled="locked || !previous.length" @click="previousPage">{{ t('上一页') }}</button><span>{{ t('第') }} {{ previous.length + 1 }} {{ t('页') }}</span><button class="secondary-button" :disabled="locked || !uploads.next_before" @click="nextPage">{{ t('下一页') }}</button></nav>
     </div>
     <div v-if="selected || intent" class="storage-review">
-      <h3>取消上传核对</h3><code>{{ intent?.upload || selected?.id }}</code><p class="surface-intro">停止这个上传并释放它的预留。已经完成的对象会保留；此操作不删除笔记或历史修订。</p>
-      <template v-if="!intent"><label><input v-model="acknowledged" type="checkbox" />我已核对设备、确认偏移和上传编号</label><button class="danger-button" :disabled="!acknowledged || locked || stale" @click="cancel()">确认取消此上传</button></template>
-      <template v-else><p class="surface-intro">写入结果尚待核对，原上传编号保持不变。</p><button class="secondary-button" :disabled="mutationBusy" @click="reconcile">查询原操作结果</button><button v-if="receipt?.state === 'active' || (receipt?.state === 'expired' && receipt.expires != null)" class="danger-button" :disabled="mutationBusy" @click="cancel(true)">重试原取消操作</button><button class="secondary-button" :disabled="mutationBusy" @click="closeReconciliation">结束本地核对</button></template>
-      <p v-if="receipt" class="operations-updated">结果 {{ receipt.state }} · 确认 {{ time(receipt.confirmed_at) }}</p>
+      <h3>{{ t('取消上传核对') }}</h3><code>{{ intent?.upload || selected?.id }}</code><p class="surface-intro">{{ t('停止这个上传并释放它的预留。已经完成的对象会保留；此操作不删除笔记或历史修订。') }}</p>
+      <template v-if="!intent"><label><input v-model="acknowledged" type="checkbox" />{{ t('我已核对设备、确认偏移和上传编号') }}</label><button class="danger-button" :disabled="!acknowledged || locked || stale" @click="cancel()">{{ t('确认取消此上传') }}</button></template>
+      <template v-else><p class="surface-intro">{{ t('写入结果尚待核对，原上传编号保持不变。') }}</p><button class="secondary-button" :disabled="mutationBusy" @click="reconcile">{{ t('查询原操作结果') }}</button><button v-if="receipt?.state === 'active' || (receipt?.state === 'expired' && receipt.expires != null)" class="danger-button" :disabled="mutationBusy" @click="cancel(true)">{{ t('重试原取消操作') }}</button><button class="secondary-button" :disabled="mutationBusy" @click="closeReconciliation">{{ t('结束本地核对') }}</button></template>
+      <p v-if="receipt" class="operations-updated">{{ t('结果') }} {{ t(receipt.state) }} {{ t('· 确认') }} {{ time(receipt.confirmed_at) }}</p>
     </div>
   </section>
 </template>

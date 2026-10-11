@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { t, formatDate } from './locale.ts'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watchEffect } from 'vue'
 import { SyncApi, type Device, type ServiceStatus, type Vault, type OperationsPage, type OperationReceipt } from './api'
+import LanguageSelector from './LanguageSelector.vue'
 import VaultHistory from './VaultHistory.vue'
 import VaultStorage from './VaultStorage.vue'
 import AdminPanel from './AdminPanel.vue'
@@ -39,6 +41,7 @@ const operationsPrevious = ref<(number | null)[]>([])
 let operationsVersion = 0
 let accountVersion = 0
 const toast = ref('')
+const toastParameters = ref<Record<string,string|number>>({})
 const toastError = ref(false)
 let toastTimer: number | undefined
 let statusTimer: number | undefined
@@ -59,8 +62,9 @@ function shortId(value: string) { return `${value.slice(0, 12)}…` }
 function usagePercent(vault: Vault) { return Math.min(100, vault.quota ? vault.used / vault.quota * 100 : 0) }
 function firstCharacter(value: string, fallback: string) { return value.trim().slice(0, 1).toUpperCase() || fallback }
 
-function notify(text: string, error = false) {
+function notify(text: string, error = false, parameters: Record<string,string|number> = {}) {
   toast.value = text
+  toastParameters.value = parameters
   toastError.value = error
   window.clearTimeout(toastTimer)
   toastTimer = window.setTimeout(() => { toast.value = '' }, 4800)
@@ -95,7 +99,7 @@ function operationName(kind: OperationReceipt['kind']) {
   return kind === 'backup' ? '备份' : kind === 'verify' ? '备份校验' : '空实例恢复'
 }
 function operationTime(value: string | null) {
-  return value ? new Date(value).toLocaleString() : '未收到完成回执'
+  return value ? formatDate(value) : t('未收到完成回执')
 }
 function operationError(code: string) {
   switch (code) {
@@ -127,7 +131,7 @@ async function refreshOperations(direction: 'first' | 'next' | 'previous' = 'fir
     if (version !== operationsVersion || !signedIn.value) return
     operations.value = next
     operationsCursor.value = before ?? null; operationsPrevious.value = stack
-    operationsCheckedAt.value = new Date().toLocaleString()
+    operationsCheckedAt.value = new Date().toISOString()
   } catch (error) {
     if (version !== operationsVersion) return
     if (!api.signedIn) { leaveConsole(); return }
@@ -222,14 +226,14 @@ async function createVault() {
     await api.createVault(name)
     newVaultName.value = ''
     await loadAccount()
-    notify(`已创建 Vault：${name}`)
+    notify('已创建知识库', false, { name })
   } catch (error) {
     notify(error instanceof Error ? error.message : 'CREATE_VAULT_FAILED', true)
   } finally { busy.value = false }
 }
 
 async function revokeDevice(device: Device) {
-  if (!window.confirm(`撤销设备“${device.name}”？该设备的下一次请求会被拒绝。`)) return
+  if (!window.confirm(t('撤销设备确认', { name: device.name }))) return
   busy.value = true
   try {
     await api.revokeDevice(device.id)
@@ -238,7 +242,7 @@ async function revokeDevice(device: Device) {
       notify('当前设备已撤销')
     } else {
       await loadAccount()
-      notify(`已撤销设备：${device.name}`)
+      notify('已撤销设备', false, { name: device.name })
     }
   } catch (error) {
     notify(error instanceof Error ? error.message : 'REVOKE_FAILED', true)
@@ -256,6 +260,7 @@ async function logout() {
   }
 }
 
+watchEffect(() => { document.title = t('OpenNexus Sync Console') })
 onMounted(() => {
   void refreshStatus()
   statusTimer = window.setInterval(() => { void refreshStatus() }, 15_000)
@@ -271,14 +276,15 @@ onBeforeUnmount(() => {
   <div class="ambient ambient-one" aria-hidden="true" />
   <div class="ambient ambient-two" aria-hidden="true" />
   <header class="topbar">
-    <a class="brand" href="/console" aria-label="OpenNexus Sync Console">
+    <a class="brand" href="/console" :aria-label="t('OpenNexus Sync Console')">
       <span class="brand-mark" aria-hidden="true"><i /><i /><i /></span>
-      <span><strong>OpenNexus</strong><small>Sync Console</small></span>
+      <span><strong>OpenNexus</strong><small>{{ t('Sync Console') }}</small></span>
     </a>
-    <div class="service-strip" aria-label="服务状态">
-      <span class="status-chip" :class="{ ok: service.health, bad: !checking && !service.health }"><i /><b>服务</b><em>{{ checking ? '检测中' : service.health ? '在线' : '离线' }}</em></span>
-      <span class="status-chip" :class="{ ok: service.ready, bad: !checking && !service.ready }"><i /><b>依赖</b><em>{{ checking ? '检测中' : service.ready ? '就绪' : '不可用' }}</em></span>
-      <button class="icon-button" type="button" :disabled="checking" aria-label="刷新服务状态" title="刷新服务状态" @click="refreshStatus">
+    <LanguageSelector/>
+    <div class="service-strip" :aria-label="t('服务状态')">
+      <span class="status-chip" :class="{ ok: service.health, bad: !checking && !service.health }"><i /><b>{{ t('服务') }}</b><em>{{ checking ? t('检测中') : service.health ? t('在线') : t('离线') }}</em></span>
+      <span class="status-chip" :class="{ ok: service.ready, bad: !checking && !service.ready }"><i /><b>{{ t('依赖') }}</b><em>{{ checking ? t('检测中') : service.ready ? t('就绪') : t('不可用') }}</em></span>
+      <button class="icon-button" type="button" :disabled="checking" :aria-label="t('刷新服务状态')" :title="t('刷新服务状态')" @click="refreshStatus">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>
       </button>
     </div>
@@ -287,13 +293,13 @@ onBeforeUnmount(() => {
   <main>
     <section v-if="!signedIn" class="hero">
       <div class="hero-copy">
-        <div class="eyebrow"><span /> Self-hosted workspace sync</div>
-        <h1>让知识在设备之间<br><em>安静地抵达。</em></h1>
-        <p>OpenNexus Sync 为每个 Vault 保留完整修订历史、附件完整性校验和设备级撤销。此控制台只连接当前服务器，不在浏览器持久保存密码或令牌。</p>
-        <div class="protocol-grid" aria-label="协议能力">
-          <article><strong>v{{ service.protocol }}</strong><span>同步协议</span></article>
-          <article><strong>{{ formatBytes(service.maxObjectSize) }}</strong><span>单对象上限</span></article>
-          <article><strong>SHA-256</strong><span>内容完整性</span></article>
+        <div class="eyebrow"><span /> {{ t('Self-hosted workspace sync') }}</div>
+        <h1>{{ t('让知识在设备之间') }}<br><em>{{ t('安静地抵达。') }}</em></h1>
+        <p>{{ t('OpenNexus Sync 为每个 Vault 保留完整修订历史、附件完整性校验和设备级撤销。此控制台只连接当前服务器，不在浏览器持久保存密码或令牌。') }}</p>
+        <div class="protocol-grid" :aria-label="t('协议能力')">
+          <article><strong>v{{ service.protocol }}</strong><span>{{ t('同步协议') }}</span></article>
+          <article><strong>{{ formatBytes(service.maxObjectSize) }}</strong><span>{{ t('单对象上限') }}</span></article>
+          <article><strong>SHA-256</strong><span>{{ t('内容完整性') }}</span></article>
         </div>
       </div>
 
@@ -301,83 +307,83 @@ onBeforeUnmount(() => {
         <div class="card-glow" aria-hidden="true" />
         <div class="card-heading">
           <span class="lock-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg></span>
-          <div><p>设备会话</p><h2 id="login-title">登录 Sync Server</h2></div>
+          <div><p>{{ t('设备会话') }}</p><h2 id="login-title">{{ t('登录 Sync Server') }}</h2></div>
         </div>
         <form @submit.prevent="signIn">
-          <label>账户<input v-model="username" autocomplete="username" maxlength="80" required placeholder="输入 Sync 账户"></label>
-          <label>密码<input v-model="password" type="password" autocomplete="current-password" minlength="12" maxlength="256" required placeholder="至少 12 个字符"></label>
-          <label>设备名称<input v-model="deviceName" autocomplete="off" maxlength="120" required></label>
-          <button class="primary-button" type="submit" :disabled="busy || !password"><span>{{ busy ? '正在建立会话…' : '建立安全会话' }}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
+          <label>{{ t('账户') }}<input v-model="username" autocomplete="username" maxlength="80" required :placeholder="t('输入 Sync 账户')"></label>
+          <label>{{ t('密码') }}<input v-model="password" type="password" autocomplete="current-password" minlength="12" maxlength="256" required :placeholder="t('至少 12 个字符')"></label>
+          <label>{{ t('设备名称') }}<input v-model="deviceName" autocomplete="off" maxlength="120" required></label>
+          <button class="primary-button" type="submit" :disabled="busy || !password"><span>{{ busy ? t('正在建立会话…') : t('建立安全会话') }}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg></button>
         </form>
-        <p class="privacy-note"><span>●</span>密码在发出请求前即从输入框清除；会话令牌只保存在当前页面内存。</p>
+        <p class="privacy-note"><span>●</span>{{ t('密码在发出请求前即从输入框清除；会话令牌只保存在当前页面内存。') }}</p>
       </section>
     </section>
 
     <section v-else class="console-view">
       <div class="console-heading">
-        <div><div class="eyebrow"><span /> Connected workspace</div><h1>同步空间</h1><p>{{ sessionLabel }}</p></div>
-        <button class="secondary-button" type="button" :disabled="busy || historyPending || storagePending || adminPending" @click="logout">退出登录</button>
+        <div><div class="eyebrow"><span /> {{ t('Connected workspace') }}</div><h1>{{ t('同步空间') }}</h1><p>{{ sessionLabel }}</p></div>
+        <button class="secondary-button" type="button" :disabled="busy || historyPending || storagePending || adminPending" @click="logout">{{ t('退出登录') }}</button>
       </div>
 
       <section v-if="credentialsRequired" class="login-card credential-card" aria-labelledby="credential-title">
         <div class="card-heading">
           <span class="lock-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg></span>
-          <div><p>首次登录</p><h2 id="credential-title">固定账户凭据</h2></div>
+          <div><p>{{ t('首次登录') }}</p><h2 id="credential-title">{{ t('固定账户凭据') }}</h2></div>
         </div>
-        <p class="surface-intro">当前密码只对本次服务启动有效。修改账户和密码后，凭据将写入数据库并在后续重启中保持不变。</p>
+        <p class="surface-intro">{{ t('当前密码只对本次服务启动有效。修改账户和密码后，凭据将写入数据库并在后续重启中保持不变。') }}</p>
         <form @submit.prevent="fixCredentials">
-          <label>当前随机密码<input v-model="currentPassword" type="password" autocomplete="current-password" minlength="12" maxlength="256" required></label>
-          <label>新账户<input v-model="newUsername" autocomplete="username" maxlength="80" required></label>
-          <label>新密码<input v-model="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label>
-          <label>确认新密码<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label>
-          <button class="primary-button" type="submit" :disabled="busy || !currentPassword || !newPassword || !confirmPassword">{{ busy ? '正在保存…' : '保存并固定凭据' }}</button>
+          <label>{{ t('当前随机密码') }}<input v-model="currentPassword" type="password" autocomplete="current-password" minlength="12" maxlength="256" required></label>
+          <label>{{ t('新账户') }}<input v-model="newUsername" autocomplete="username" maxlength="80" required></label>
+          <label>{{ t('新密码') }}<input v-model="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+          <label>{{ t('确认新密码') }}<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label>
+          <button class="primary-button" type="submit" :disabled="busy || !currentPassword || !newPassword || !confirmPassword">{{ busy ? t('正在保存…') : t('保存并固定凭据') }}</button>
         </form>
       </section>
 
       <template v-else>
-      <nav v-if="operatorRole" class="workspace-switch" aria-label="工作区域"><button :aria-pressed="activeView === 'workspace'" :disabled="busy || historyPending || storagePending || adminPending" @click="activeView = 'workspace'">我的知识库</button><button :aria-pressed="activeView === 'admin'" :disabled="busy || historyPending || storagePending || adminPending" @click="activeView = 'admin'">服务管理</button></nav>
-      <p v-if="roleError" class="operations-error" role="alert">{{ roleError }}</p>
+      <nav v-if="operatorRole" class="workspace-switch" :aria-label="t('工作区域')"><button :aria-pressed="activeView === 'workspace'" :disabled="busy || historyPending || storagePending || adminPending" @click="activeView = 'workspace'">{{ t('我的知识库') }}</button><button :aria-pressed="activeView === 'admin'" :disabled="busy || historyPending || storagePending || adminPending" @click="activeView = 'admin'">{{ t('服务管理') }}</button></nav>
+      <p v-if="roleError" class="operations-error" role="alert">{{ t(roleError) }}</p>
       <div v-if="activeView === 'workspace'">
       <div class="metric-grid">
-        <article><span>远端 Vault</span><strong>{{ vaults.length }}</strong><small>当前账户可访问</small></article>
-        <article><span>已使用空间</span><strong>{{ formatBytes(used) }}</strong><small>总配额 {{ formatBytes(quota) }}</small></article>
-        <article><span>设备</span><strong>{{ devices.length }}</strong><small>{{ activeDevices }} 台可访问</small></article>
-        <article><span>协议</span><strong>v{{ service.protocol }}</strong><small>历史长期保留</small></article>
+        <article><span>{{ t('远端 Vault') }}</span><strong>{{ vaults.length }}</strong><small>{{ t('当前账户可访问') }}</small></article>
+        <article><span>{{ t('已使用空间') }}</span><strong>{{ formatBytes(used) }}</strong><small>{{ t('总配额') }} {{ formatBytes(quota) }}</small></article>
+        <article><span>{{ t('设备') }}</span><strong>{{ devices.length }}</strong><small>{{ activeDevices }} {{ t('台可访问') }}</small></article>
+        <article><span>{{ t('协议') }}</span><strong>v{{ service.protocol }}</strong><small>{{ t('历史长期保留') }}</small></article>
       </div>
 
       <div class="content-grid">
         <section class="surface">
           <div class="surface-heading">
-            <div><p>Vaults</p><h2>远端知识库</h2></div>
-            <button class="icon-button" type="button" :disabled="busy" aria-label="刷新账户数据" title="刷新账户数据" @click="refreshAccount">
+            <div><p>{{ t('Vaults') }}</p><h2>{{ t('远端知识库') }}</h2></div>
+            <button class="icon-button" type="button" :disabled="busy" :aria-label="t('刷新账户数据')" :title="t('刷新账户数据')" @click="refreshAccount">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></svg>
             </button>
           </div>
           <form class="create-form" @submit.prevent="createVault">
-            <label>创建新 Vault</label>
-            <div><input v-model="newVaultName" maxlength="120" required placeholder="例如：产品知识库"><button type="submit" :disabled="busy || !newVaultName.trim()">创建</button></div>
+            <label>{{ t('创建新 Vault') }}</label>
+            <div><input v-model="newVaultName" maxlength="120" required :placeholder="t('例如：产品知识库')"><button type="submit" :disabled="busy || !newVaultName.trim()">{{ t('创建') }}</button></div>
           </form>
           <div class="vault-list">
-            <div v-if="!vaults.length" class="empty-state">还没有远端 Vault</div>
+            <div v-if="!vaults.length" class="empty-state">{{ t('还没有远端 Vault') }}</div>
             <article v-for="vault in vaults" :key="vault.id" class="vault-item">
               <div class="vault-symbol">N</div>
               <div class="item-copy">
-                <strong>{{ vault.name }}</strong><small>{{ shortId(vault.id) }} · revision {{ vault.sequence }}</small>
+                <strong>{{ vault.name }}</strong><small>{{ shortId(vault.id) }} · {{ t('修订') }} {{ vault.sequence }}</small>
                 <progress :value="usagePercent(vault)" max="100" />
               </div>
-              <div class="item-side"><strong>{{ formatBytes(vault.used) }}</strong><small>of {{ formatBytes(vault.quota) }}</small></div>
+              <div class="item-side"><strong>{{ formatBytes(vault.used) }}</strong><small>{{ t('of') }} {{ formatBytes(vault.quota) }}</small></div>
             </article>
           </div>
         </section>
 
         <section class="surface">
-          <div class="surface-heading"><div><p>Devices</p><h2>设备会话</h2></div><span class="secure-badge">逐次鉴权</span></div>
-          <p class="surface-intro">撤销会让该设备的下一次请求立即失败。Vault 内容和本地文件不会因此删除。</p>
+          <div class="surface-heading"><div><p>{{ t('Devices') }}</p><h2>{{ t('设备会话') }}</h2></div><span class="secure-badge">{{ t('逐次鉴权') }}</span></div>
+          <p class="surface-intro">{{ t('撤销会让该设备的下一次请求立即失败。Vault 内容和本地文件不会因此删除。') }}</p>
           <div class="device-list">
             <article v-for="device in devices" :key="device.id" class="device-item" :class="{ revoked: device.revoked }">
               <div class="device-symbol">{{ firstCharacter(device.name, 'D') }}</div>
-              <div class="item-copy"><strong>{{ device.name }}</strong><small>{{ device.revoked ? '已撤销' : '可访问' }}<template v-if="device.id === api.deviceId"> · 当前设备</template></small></div>
-              <button v-if="!device.revoked" class="danger-button" type="button" :disabled="busy || historyPending || storagePending" @click="revokeDevice(device)">撤销</button>
+              <div class="item-copy"><strong>{{ device.name }}</strong><small>{{ device.revoked ? t('已撤销') : t('可访问') }}<template v-if="device.id === api.deviceId">{{ t(' · 当前设备') }}</template></small></div>
+              <button v-if="!device.revoked" class="danger-button" type="button" :disabled="busy || historyPending || storagePending" @click="revokeDevice(device)">{{ t('撤销') }}</button>
             </article>
           </div>
         </section>
@@ -390,30 +396,30 @@ onBeforeUnmount(() => {
       <OperationsOverview v-if="operatorRole && activeView === 'admin'" :api="api" :disabled="busy || adminPending" @expired="leaveConsole" @forbidden="leaveAdmin" />
       <section v-if="operatorRole && activeView === 'admin'" class="surface operations-surface" aria-labelledby="operations-title">
         <div class="surface-heading">
-          <div><p>Operations</p><h2 id="operations-title">备份与恢复记录</h2></div>
-          <button class="secondary-button" type="button" :disabled="operationsBusy" @click="refreshOperations()">{{ operationsBusy ? '正在读取…' : '刷新运维记录' }}</button>
+          <div><p>{{ t('Operations') }}</p><h2 id="operations-title">{{ t('备份与恢复记录') }}</h2></div>
+          <button class="secondary-button" type="button" :disabled="operationsBusy" @click="refreshOperations()">{{ operationsBusy ? t('正在读取…') : t('刷新运维记录') }}</button>
         </div>
-        <p class="surface-intro">查看备份、完整校验及空实例恢复的实际回执。未收到完成回执的操作需要核对原进程和目标数据。</p>
-        <p v-if="!checking && !service.ready" class="operations-error" role="alert">依赖就绪检查未通过。请核对数据库、对象存储和临时目录的读写状态。</p>
-        <p v-if="operationsError" class="operations-error" role="alert">{{ operationsError }}<template v-if="operations"> 已显示的记录尚未刷新。</template></p>
-        <p v-if="operationsCheckedAt" class="operations-updated">最近读取 · {{ operationsCheckedAt }}</p>
-        <p v-if="operations && !operations.configured" class="empty-state">服务尚未配置运维记录存储。</p>
-        <p v-else-if="operations && !operations.items.length" class="empty-state">尚无备份或恢复记录。</p>
+        <p class="surface-intro">{{ t('查看备份、完整校验及空实例恢复的实际回执。未收到完成回执的操作需要核对原进程和目标数据。') }}</p>
+        <p v-if="!checking && !service.ready" class="operations-error" role="alert">{{ t('依赖就绪检查未通过。请核对数据库、对象存储和临时目录的读写状态。') }}</p>
+        <p v-if="operationsError" class="operations-error" role="alert">{{ t(operationsError) }}<template v-if="operations"> {{ t('已显示的记录尚未刷新。') }}</template></p>
+        <p v-if="operationsCheckedAt" class="operations-updated">{{ t('最近读取 ·') }} {{ formatDate(operationsCheckedAt) }}</p>
+        <p v-if="operations && !operations.configured" class="empty-state">{{ t('服务尚未配置运维记录存储。') }}</p>
+        <p v-else-if="operations && !operations.items.length" class="empty-state">{{ t('尚无备份或恢复记录。') }}</p>
         <div v-if="operations" class="operations-list">
           <article v-for="item in operations.items" :key="item.operation_id" class="operation-item" :class="item.state">
-            <div class="operation-heading"><strong>{{ operationName(item.kind) }}</strong><span>{{ item.state === 'succeeded' ? '已完成' : item.state === 'failed' ? '未完成' : '未收到完成回执' }}</span></div>
-            <p>开始 {{ operationTime(item.started_utc) }} · {{ item.finished_utc ? '完成 ' + operationTime(item.finished_utc) : '请核对原操作' }}</p>
-            <p v-if="item.object_count != null">{{ item.object_count }} 个对象 · {{ formatBytes(item.object_bytes ?? 0) }}<template v-if="item.verified_objects != null"> · {{ item.verified_objects }} 个对象已校验</template></p>
-            <p v-if="item.state === 'failed'" class="operations-error">{{ operationError(item.code) }} ({{ item.code }})</p>
-            <small>操作 {{ item.operation_id }}</small>
+            <div class="operation-heading"><strong>{{ t(operationName(item.kind)) }}</strong><span>{{ item.state === 'succeeded' ? t('已完成') : item.state === 'failed' ? t('未完成') : t('未收到完成回执') }}</span></div>
+            <p>{{ t('开始') }} {{ operationTime(item.started_utc) }} · {{ item.finished_utc ? t('完成 ') + operationTime(item.finished_utc) : t('请核对原操作') }}</p>
+            <p v-if="item.object_count != null">{{ item.object_count }} {{ t('个对象 ·') }} {{ formatBytes(item.object_bytes ?? 0) }}<template v-if="item.verified_objects != null"> · {{ item.verified_objects }} {{ t('个对象已校验') }}</template></p>
+            <p v-if="item.state === 'failed'" class="operations-error">{{ t(operationError(item.code)) }} ({{ item.code }})</p>
+            <small>{{ t('操作') }} {{ item.operation_id }}</small>
           </article>
         </div>
-        <nav v-if="operations || operationsPrevious.length" class="admin-pagination" aria-label="备份与恢复记录分页"><button class="secondary-button" :disabled="operationsBusy || !operationsPrevious.length" @click="refreshOperations('previous')">上一页</button><span>{{ operationsPrevious.length + 1 }}</span><button class="secondary-button" :disabled="operationsBusy || !operations?.next_before" @click="refreshOperations('next')">下一页</button></nav>
+        <nav v-if="operations || operationsPrevious.length" class="admin-pagination" :aria-label="t('备份与恢复记录分页')"><button class="secondary-button" :disabled="operationsBusy || !operationsPrevious.length" @click="refreshOperations('previous')">{{ t('上一页') }}</button><span>{{ operationsPrevious.length + 1 }}</span><button class="secondary-button" :disabled="operationsBusy || !operations?.next_before" @click="refreshOperations('next')">{{ t('下一页') }}</button></nav>
       </section>
       </template>
     </section>
   </main>
 
-  <footer><span>OpenNexus Sync v1</span><span>Transport encryption · Device revocation · Immutable history</span></footer>
-  <div v-if="toast" class="toast" :class="{ error: toastError }" role="status" aria-live="polite">{{ toast }}</div>
+  <footer><span>OpenNexus Sync v1</span><span>{{ t('Transport encryption · Device revocation · Immutable history') }}</span></footer>
+  <div v-if="toast" class="toast" :class="{ error: toastError }" role="status" aria-live="polite">{{ t(toast, toastParameters) }}</div>
 </template>

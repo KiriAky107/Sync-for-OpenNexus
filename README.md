@@ -146,6 +146,10 @@ Use a new 32-character lowercase hexadecimal operation ID for each reviewed acti
 
 Accounts and per-account resources use `limit` and stable ID cursors. Account lists return `next_before`; details return `vaults_next_before` and `devices_next_before`, supplied as `vault_before` or `device_before` on subsequent reads. Diagnostics identify database, staging, object-store, integrity and timeout failures with fixed codes, probe observation times and a cache flag. A still-running probe is reused after timeout. Ordinary accounts cannot read these administration resources.
 
+### Choose the console language
+
+Use the language selector to switch between English and Simplified Chinese, including history, administration, device observations and operation reminders. The browser stores only this language preference. Account and device names, file paths, content and original operation receipts keep their original values. Switching language preserves the current session, reviewed quota or restore request, and any pending reconciliation; it does not send a request.
+
 ## Architecture
 
 ```mermaid

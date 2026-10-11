@@ -144,6 +144,10 @@ python -m sync_server gc-apply --directory D:/OpenNexus-backups/before-gc --plan
 
 账户和账户内资源按 `limit` 与稳定 ID 游标分页。账户列表返回 `next_before`；详情返回 `vaults_next_before` 和 `devices_next_before`，后续分别通过 `vault_before` 或 `device_before` 读取。诊断以固定代码区分数据库、暂存、对象存储、完整性和超时，提供探测时间与缓存标记。超时后仍复用尚未结束的探测。普通账户不能读取管理资源。
 
+### 选择控制台语言
+
+使用语言选择切换简体中文和英文，包括历史、管理、设备观测和运维提醒。浏览器仅保存这一语言偏好。账户与设备名称、文件路径、内容和原操作回执保留原值。切换语言保留当前会话、已审核的配额或恢复请求及待核对结果，不发送请求。
+
 ## 系统架构
 
 ```mermaid

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatDate } from './locale.ts'
 import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import type { SyncApi, PlanState, ReclamationPage, ReclamationDetail } from './api'
 const props = defineProps<{ api: SyncApi; disabled: boolean }>()
@@ -9,7 +10,7 @@ const vault = ref(''), state = ref<PlanState | ''>(''), lookupId = ref('')
 const cursor = ref<string | null>(null), previous = ref<(string | null)[]>([])
 let applied: { vault: string; state: PlanState | '' } = { vault: '', state: '' }
 let alive = true, generation = 0
-const time = (seconds: number | null) => seconds === null ? '尚无回执' : new Date(seconds * 1000).toLocaleString('zh-CN', { hour12: false })
+const time = (seconds: number | null) => seconds === null ? t('尚无回执') : formatDate(seconds * 1000)
 const states = { preview: '原计划预览', running: '正在核对', complete: '已完成' }
 const itemStates = { prepared: '待核对', reclaimed: '已回收', protected: '已保护' }
 const reasons: Record<string, string> = { revision: '永久修订引用', upload: '上传记录', pending_reclamation: '其他回收待核对', grace_period: '对象宽限期', completion_receipt: '近期完成回执', absent_from_backup: '未包含在原备份' }
@@ -57,23 +58,23 @@ onBeforeUnmount(() => { alive = false; generation++; clear() })
 
 <template>
   <section class="surface reclamation-surface" aria-labelledby="reclamation-title">
-    <div class="surface-heading"><div><p>Reclamation plans</p><h2 id="reclamation-title">对象回收只读核对</h2></div><button class="secondary-button" :disabled="busy || disabled" @click="load()">{{ busy ? '正在读取…' : '刷新原计划' }}</button></div>
-    <p class="surface-intro">读取 CLI 已创建的原计划、冻结候选与对象回执。保护统计属于原计划快照；本次读取没有重新检查引用或备份。历史修订默认永久保留。</p>
-    <form class="reclamation-filters" @submit.prevent="load(true)"><fieldset :disabled="busy || disabled"><label>知识库编号<input v-model="vault" maxlength="32" placeholder="全部知识库" autocomplete="off"></label><label>原计划状态<select v-model="state"><option value="">全部状态</option><option value="preview">原计划预览</option><option value="running">正在核对</option><option value="complete">已完成</option></select></label><button class="secondary-button" type="submit">筛选计划</button></fieldset></form>
-    <form class="reclamation-lookup" @submit.prevent="select(lookupId.trim())"><label>按原计划编号核对<input v-model="lookupId" maxlength="32" required autocomplete="off"></label><button class="secondary-button" :disabled="busy || disabled" type="submit">读取原计划</button></form>
-    <p v-if="failure" class="operations-error" role="alert">{{ failure }}</p><p v-if="busy" class="operations-updated" role="status">正在读取原快照与回执…</p>
-    <p v-if="page" class="operations-updated">{{ stale ? '上次读取，尚未刷新' : '列表读取时间' }} · {{ time(page.observed_at) }}</p>
-    <div class="admin-resource-list"><article v-for="item in page?.items" :key="item.plan_id" class="admin-resource"><div><strong>{{ states[item.state] }}</strong><small>{{ item.plan_id }}</small><p>知识库 {{ item.vault_id }}<br>创建 {{ time(item.created) }} · 已选择 {{ item.selected_objects }} / 原可选 {{ item.eligible_objects }} 个 · {{ item.candidate_bytes }} 字节</p><p v-if="item.expired && item.state === 'preview'">原冻结有效期已过</p></div><button class="secondary-button" :disabled="busy || disabled" @click="select(item.plan_id)">查看原计划</button></article></div>
-    <p v-if="page && !page.items.length" class="empty-state">当前筛选下没有原计划。</p>
-    <nav class="admin-pagination" aria-label="回收计划分页"><button class="secondary-button" :disabled="busy || disabled || !previous.length" @click="paginate(false)">上一页</button><span>{{ previous.length + 1 }}</span><button class="secondary-button" :disabled="busy || disabled || !page?.next_before" @click="paginate(true)">下一页</button></nav>
+    <div class="surface-heading"><div><p>{{ t('Reclamation plans') }}</p><h2 id="reclamation-title">{{ t('对象回收只读核对') }}</h2></div><button class="secondary-button" :disabled="busy || disabled" @click="load()">{{ busy ? t('正在读取…') : t('刷新原计划') }}</button></div>
+    <p class="surface-intro">{{ t('读取 CLI 已创建的原计划、冻结候选与对象回执。保护统计属于原计划快照；本次读取没有重新检查引用或备份。历史修订默认永久保留。') }}</p>
+    <form class="reclamation-filters" @submit.prevent="load(true)"><fieldset :disabled="busy || disabled"><label>{{ t('知识库编号') }}<input v-model="vault" maxlength="32" :placeholder="t('全部知识库')" autocomplete="off"></label><label>{{ t('原计划状态') }}<select v-model="state"><option value="">{{ t('全部状态') }}</option><option value="preview">{{ t('原计划预览') }}</option><option value="running">{{ t('正在核对') }}</option><option value="complete">{{ t('已完成') }}</option></select></label><button class="secondary-button" type="submit">{{ t('筛选计划') }}</button></fieldset></form>
+    <form class="reclamation-lookup" @submit.prevent="select(lookupId.trim())"><label>{{ t('按原计划编号核对') }}<input v-model="lookupId" maxlength="32" required autocomplete="off"></label><button class="secondary-button" :disabled="busy || disabled" type="submit">{{ t('读取原计划') }}</button></form>
+    <p v-if="failure" class="operations-error" role="alert">{{ t(failure) }}</p><p v-if="busy" class="operations-updated" role="status">{{ t('正在读取原快照与回执…') }}</p>
+    <p v-if="page" class="operations-updated">{{ stale ? t('上次读取，尚未刷新') : t('列表读取时间') }} · {{ time(page.observed_at) }}</p>
+    <div class="admin-resource-list"><article v-for="item in page?.items" :key="item.plan_id" class="admin-resource"><div><strong>{{ t(states[item.state]) }}</strong><small>{{ item.plan_id }}</small><p>{{ t('知识库') }} {{ item.vault_id }}<br>{{ t('创建') }} {{ time(item.created) }} {{ t('· 已选择') }} {{ item.selected_objects }} {{ t('/ 原可选') }} {{ item.eligible_objects }} {{ t('个 ·') }} {{ item.candidate_bytes }} {{ t('字节') }}</p><p v-if="item.expired && item.state === 'preview'">{{ t('原冻结有效期已过') }}</p></div><button class="secondary-button" :disabled="busy || disabled" @click="select(item.plan_id)">{{ t('查看原计划') }}</button></article></div>
+    <p v-if="page && !page.items.length" class="empty-state">{{ t('当前筛选下没有原计划。') }}</p>
+    <nav class="admin-pagination" :aria-label="t('回收计划分页')"><button class="secondary-button" :disabled="busy || disabled || !previous.length" @click="paginate(false)">{{ t('上一页') }}</button><span>{{ previous.length + 1 }}</span><button class="secondary-button" :disabled="busy || disabled || !page?.next_before" @click="paginate(true)">{{ t('下一页') }}</button></nav>
     <article v-if="detail" class="reclamation-detail">
-      <h3>{{ states[detail.state] }} · 原计划快照</h3><p class="operations-updated">{{ stale ? '上次读取，尚未刷新' : '详情读取时间' }} · {{ time(detail.observed_at) }}</p>
-      <dl><dt>原计划编号</dt><dd><code>{{ detail.plan_id }}</code></dd><dt>知识库</dt><dd>{{ detail.vault_id }}</dd><dt>原 CLI 操作者</dt><dd>{{ detail.actor_id }}</dd><dt>原状态代码</dt><dd>{{ detail.code }}</dd><dt>创建 / 冻结有效期</dt><dd>{{ time(detail.created) }} / {{ time(detail.expires) }}{{ detail.expired ? ' · 已过原有效期' : '' }}</dd><dt>最后完成回执</dt><dd>{{ time(detail.finished) }}</dd><dt>原备份 manifest SHA-256</dt><dd>{{ detail.backup_manifest_sha256 }}</dd><dt>原序列 / 登记用量</dt><dd>{{ detail.sequence }} / {{ detail.charged_bytes }} 字节</dd><dt>宽限期 / 原截止时间</dt><dd>{{ detail.preview.grace_hours }} 小时 / {{ time(detail.preview.cutoff) }}</dd></dl>
-      <p>原可选 {{ detail.eligible_objects }} 个 / {{ detail.eligible_bytes }} 字节；本计划选择 {{ detail.selected_objects }} 个 / {{ detail.candidate_bytes }} 字节。{{ detail.has_more ? '原预览仅选择部分候选。' : '原候选已完整列入此计划。' }}</p>
-      <h4>原保护统计</h4><ul><li v-for="(count, reason) in detail.preview.protected_counts" :key="reason">{{ reasons[reason] ?? reason }} · {{ count }} 个</li></ul><p v-if="!Object.keys(detail.preview.protected_counts).length">原预览没有记录受保护对象。</p>
-      <h4>冻结候选 · {{ detail.preview.candidates.length }}</h4><ul class="reclamation-items"><li v-for="item in detail.preview.candidates" :key="item.hash"><code>{{ item.hash }}</code><span>{{ item.size }} 字节 · 原创建 {{ time(item.created) }}</span></li></ul>
-      <h4>原对象回执</h4><p>已回收 {{ detail.reclaimed_objects }} 个 / {{ detail.reclaimed_bytes }} 字节 · 已保护 {{ detail.protected_objects }} 个 · 待核对 {{ detail.pending_objects }} 个</p><p v-if="!detail.items.length">尚无对象执行回执。</p><ul class="reclamation-items"><li v-for="item in detail.items" :key="item.hash"><code>{{ item.hash }}</code><span>{{ itemStates[item.state] }} · {{ item.code }} · {{ item.size }} 字节 · {{ time(item.confirmed_at) }}</span></li></ul>
-      <p class="surface-intro">使用此原计划编号在部署主机运行现有 <code>gc-status</code> 核对。网页只读取快照与回执。</p>
+      <h3>{{ t(states[detail.state]) }} {{ t('· 原计划快照') }}</h3><p class="operations-updated">{{ stale ? t('上次读取，尚未刷新') : t('详情读取时间') }} · {{ time(detail.observed_at) }}</p>
+      <dl><dt>{{ t('原计划编号') }}</dt><dd><code>{{ detail.plan_id }}</code></dd><dt>{{ t('知识库') }}</dt><dd>{{ detail.vault_id }}</dd><dt>{{ t('原 CLI 操作者') }}</dt><dd>{{ detail.actor_id }}</dd><dt>{{ t('原状态代码') }}</dt><dd>{{ detail.code }}</dd><dt>{{ t('创建 / 冻结有效期') }}</dt><dd>{{ time(detail.created) }} / {{ time(detail.expires) }}{{ detail.expired ? t(' · 已过原有效期') : '' }}</dd><dt>{{ t('最后完成回执') }}</dt><dd>{{ time(detail.finished) }}</dd><dt>{{ t('原备份 manifest SHA-256') }}</dt><dd>{{ detail.backup_manifest_sha256 }}</dd><dt>{{ t('原序列 / 登记用量') }}</dt><dd>{{ detail.sequence }} / {{ detail.charged_bytes }} {{ t('字节') }}</dd><dt>{{ t('宽限期 / 原截止时间') }}</dt><dd>{{ detail.preview.grace_hours }} {{ t('小时 /') }} {{ time(detail.preview.cutoff) }}</dd></dl>
+      <p>{{ t('原可选') }} {{ detail.eligible_objects }} {{ t('个 /') }} {{ detail.eligible_bytes }} {{ t('字节；本计划选择') }} {{ detail.selected_objects }} {{ t('个 /') }} {{ detail.candidate_bytes }} {{ t('字节。') }}{{ detail.has_more ? t('原预览仅选择部分候选。') : t('原候选已完整列入此计划。') }}</p>
+      <h4>{{ t('原保护统计') }}</h4><ul><li v-for="(count, reason) in detail.preview.protected_counts" :key="reason">{{ reasons[reason] ? t(reasons[reason]!) : reason }} · {{ count }} {{ t('个') }}</li></ul><p v-if="!Object.keys(detail.preview.protected_counts).length">{{ t('原预览没有记录受保护对象。') }}</p>
+      <h4>{{ t('冻结候选 ·') }} {{ detail.preview.candidates.length }}</h4><ul class="reclamation-items"><li v-for="item in detail.preview.candidates" :key="item.hash"><code>{{ item.hash }}</code><span>{{ item.size }} {{ t('字节 · 原创建') }} {{ time(item.created) }}</span></li></ul>
+      <h4>{{ t('原对象回执') }}</h4><p>{{ t('已回收') }} {{ detail.reclaimed_objects }} {{ t('个 /') }} {{ detail.reclaimed_bytes }} {{ t('字节 · 已保护') }} {{ detail.protected_objects }} {{ t('个 · 待核对') }} {{ detail.pending_objects }} {{ t('个') }}</p><p v-if="!detail.items.length">{{ t('尚无对象执行回执。') }}</p><ul class="reclamation-items"><li v-for="item in detail.items" :key="item.hash"><code>{{ item.hash }}</code><span>{{ t(itemStates[item.state]) }} · {{ item.code }} · {{ item.size }} {{ t('字节 ·') }} {{ time(item.confirmed_at) }}</span></li></ul>
+      <p class="surface-intro">{{ t('使用此原计划编号在部署主机运行现有') }} <code>gc-status</code> {{ t('核对。网页只读取快照与回执。') }}</p>
     </article>
   </section>
 </template>

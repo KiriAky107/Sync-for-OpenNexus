@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatDate, formatAdminLabel as actionLabel } from './locale.ts'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { SyncApiError, type SyncApi, type AdminAccounts, type AdminDetails, type AdminDiagnostics, type AdminReceipt, type AdminVault, type Device } from './api'
 import { execute, operationId, quotaBytes, validateReceipt, type AdminIntent } from './adminIntent'
@@ -10,6 +11,8 @@ const emit = defineEmits<{ pending: [value: boolean]; expired: []; forbidden: []
 const accounts = shallowRef<AdminAccounts | null>(null), details = shallowRef<AdminDetails | null>(null), diagnostics = shallowRef<AdminDiagnostics | null>(null)
 const selectedId = ref(''), readBusy = ref(false), mutationBusy = ref(false), diagnosticsBusy = ref(false), stale = ref(false), diagnosticsStale = ref(false)
 const failure = ref(''), diagnosticsFailure = ref(''), notice = ref('')
+const failureHint = ref(''), failureMore = ref('')
+const completedAction = shallowRef<AdminIntent | null>(null), completedTime = ref(0)
 const cursor = ref<string | null>(null), previous = ref<(string | null)[]>([])
 const vaultCursor = ref<string | null>(null), deviceCursor = ref<string | null>(null)
 const vaultPrevious = ref<(string | null)[]>([]), devicePrevious = ref<(string | null)[]>([])
@@ -26,7 +29,7 @@ const locked = computed(() => readBusy.value || mutationBusy.value || !!intent.v
 watch(() => mutationBusy.value || !!intent.value, value => emit('pending', value))
 const units = [{ value: 1, name: 'B' }, { value: 1024, name: 'KiB' }, { value: 1024**2, name: 'MiB' }, { value: 1024**3, name: 'GiB' }]
 function bytes(value: number) { let index = 0; while (value >= 1024 && index < 3) { value /= 1024; index++ }; return `${value.toFixed(index ? 1 : 0)} ${units[index]!.name}` }
-const time = (value: number | null, millis = false) => value == null ? '尚未确认' : new Date(value * (millis ? 1 : 1000)).toLocaleString('zh-CN', { hour12: false })
+const time = (value: number | null, millis = false) => value == null ? t('尚未确认') : formatDate(value * (millis ? 1 : 1000))
 function message(error: unknown): string {
   if (!props.api.signedIn) { emit('expired'); return '会话已失效，请重新登录。' }
   const code = error instanceof Error ? error.message : ''
@@ -44,6 +47,10 @@ function message(error: unknown): string {
   }
   return known[code] ?? '请求未完成，请检查连接后核对原结果。'
 }
+function failureMessage(error: unknown): string {
+  failureHint.value = ''; failureMore.value = ''
+  return message(error)
+}
 async function load(reset = false): Promise<void> {
   if (!alive || mutationBusy.value || intent.value || readBusy.value) return
   const ticket = ++version; readBusy.value = true; failure.value = ''; stale.value = !!details.value
@@ -55,7 +62,7 @@ async function load(reset = false): Promise<void> {
     if (!selectedId.value) selectedId.value = page.items[0]?.id ?? ''
     if (selectedId.value) await readDetails(ticket)
     else { details.value = null; stale.value = false }
-  } catch (error) { if (alive && ticket === version) failure.value = message(error) }
+  } catch (error) { if (alive && ticket === version) failure.value = failureMessage(error) }
   finally { if (alive && ticket === version) readBusy.value = false }
 }
 async function readDetails(ticket: number): Promise<void> {
@@ -117,7 +124,7 @@ async function prepareCreate(): Promise<void> {
     const action: AdminIntent = Object.freeze({ kind: 'create_account', label: newUsername.value.trim(), body: Object.freeze({ operation_id: operationId(), username: newUsername.value.trim(), password: password.value, default_quota: quotaBytes(newQuota.value, newUnit.value) }) })
     password.value = confirmPassword.value = ''; review.value = null; acknowledged.value = false; intent.value = action; attempted.value = false; receipt.value = null; notice.value = ''
     void focusPanel(reviewPanel)
-  } catch (error) { failure.value = message(error) }
+  } catch (error) { failure.value = failureMessage(error) }
 }
 function prepareReview(): void {
   if (locked.value || stale.value || !review.value || !details.value) return
@@ -130,13 +137,13 @@ function prepareReview(): void {
         : { kind: selected.kind, label: selected.label, user, device: selected.device.id, body: Object.freeze({ operation_id }) }
     intent.value = Object.freeze(action); acknowledged.value = false; attempted.value = false; receipt.value = null; failure.value = ''; notice.value = ''
     void focusPanel(reviewPanel)
-  } catch (error) { failure.value = message(error) }
+  } catch (error) { failure.value = failureMessage(error) }
 }
 async function finish(result: AdminReceipt, action: AdminIntent): Promise<void> {
   validateReceipt(result, action); receipt.value = result
   if (result.state !== 'completed') { notice.value = '服务器未找到原操作回执。核对原请求后可按同一编号重试。'; return }
   intent.value = null; acknowledged.value = false; review.value = null; mutationBusy.value = false
-  notice.value = `操作已完成 · ${action.label} · ${time(result.confirmed_at)}`
+  completedAction.value = action; completedTime.value = result.confirmed_at; notice.value = '管理完成反馈'
   if (action.kind === 'create_account') { selectedId.value = result.user_id!; newUsername.value = ''; vaultCursor.value = deviceCursor.value = null; vaultPrevious.value = []; devicePrevious.value = [] }
   if (action.kind === 'revoke_device' && action.device === props.api.deviceId) { emit('expired'); return }
   await load(); emit('refreshed'); void readDiagnostics()
@@ -147,12 +154,12 @@ async function send(retry = false): Promise<void> {
   try { const result = await execute(props.api, action); if (alive && intent.value === action) await finish(result, action) }
   catch (error) {
     if (alive && intent.value === action) {
-      failure.value = message(error)
+      failure.value = failureMessage(error)
       if (error instanceof SyncApiError && [400, 404, 409, 422].includes(error.status)) {
         const explanation = failure.value; intent.value = null; review.value = null; acknowledged.value = false; mutationBusy.value = false
-        await load(); if (alive) failure.value = explanation + (failure.value ? ' ' + failure.value : '')
+        await load(); if (alive) { failureMore.value = failure.value; failure.value = explanation }
       }
-      else if (props.api.signedIn) failure.value += ' 请先查询原操作结果。'
+      else if (props.api.signedIn) failureHint.value = ' 请先查询原操作结果。'
     }
   } finally { if (alive) mutationBusy.value = false }
 }
@@ -160,7 +167,7 @@ async function reconcile(): Promise<void> {
   if (!intent.value || !attempted.value || mutationBusy.value) return
   const action = intent.value; mutationBusy.value = true; failure.value = ''
   try { const result = await props.api.adminOperation(action.body.operation_id); if (alive && intent.value === action) await finish(result, action) }
-  catch (error) { if (alive && intent.value === action) failure.value = message(error) }
+  catch (error) { if (alive && intent.value === action) failure.value = failureMessage(error) }
   finally { if (alive) mutationBusy.value = false }
 }
 function closeIntent(): void {
@@ -180,49 +187,49 @@ onBeforeUnmount(() => { alive = false; version++; diagnosticVersion++; intent.va
 
 <template>
   <section class="surface admin-diagnostics" aria-labelledby="diagnostics-title">
-    <div class="surface-heading"><div><p>Diagnostics</p><h2 id="diagnostics-title">服务诊断</h2></div><button class="secondary-button" :disabled="diagnosticsBusy" @click="readDiagnostics">{{ diagnosticsBusy ? '正在检测…' : '刷新诊断' }}</button></div>
-    <p v-if="diagnosticsFailure" class="operations-error" role="alert">{{ diagnosticsFailure }}</p>
+    <div class="surface-heading"><div><p>{{ t('Diagnostics') }}</p><h2 id="diagnostics-title">{{ t('服务诊断') }}</h2></div><button class="secondary-button" :disabled="diagnosticsBusy" @click="readDiagnostics">{{ diagnosticsBusy ? t('正在检测…') : t('刷新诊断') }}</button></div>
+    <p v-if="diagnosticsFailure" class="operations-error" role="alert">{{ t(diagnosticsFailure) }}</p>
     <template v-if="diagnostics">
-      <p class="operations-updated">{{ diagnosticsStale ? '上次读取，尚未刷新' : '本次读取' }} · {{ time(diagnostics.confirmed_at) }} · {{ diagnostics.dependencies.cached ? '缓存探测' : '本次探测' }}</p>
-      <div class="admin-diagnostic-grid"><article :class="{ unhealthy: !diagnostics.dependencies.ready }"><small>依赖</small><strong>{{ dependencyText }}</strong><span>探测确认 {{ time(diagnostics.dependencies.checked_at, true) }}</span><span v-if="diagnostics.dependencies.probe_pending">原探测仍在运行，后续读取会核对它。</span></article><article><small>账目异常</small><strong>{{ diagnostics.accounting_mismatches }} 个知识库</strong><span>需核对登记对象与计费用量</span></article><article><small>回收待核对</small><strong>{{ diagnostics.pending_reclamation_objects }} 个对象</strong><span>使用原回收计划继续</span></article></div>
-      <p v-if="diagnostics.upload_maintenance" class="surface-intro admin-maintenance">最近暂存清理 {{ time(diagnostics.upload_maintenance.finished_at) }} · {{ diagnostics.upload_maintenance.duration_ms }} ms · 删除 {{ diagnostics.upload_maintenance.removed }} 个 · 文件系统失败 {{ diagnostics.upload_maintenance.filesystem_failures }} / 元数据失败 {{ diagnostics.upload_maintenance.metadata_failures }}<br>累计删除 {{ diagnostics.upload_maintenance.total_removed }} 个 · 累计失败 {{ diagnostics.upload_maintenance.total_failures }} 次</p>
+      <p class="operations-updated">{{ diagnosticsStale ? t('上次读取，尚未刷新') : t('本次读取') }} · {{ time(diagnostics.confirmed_at) }} · {{ diagnostics.dependencies.cached ? t('缓存探测') : t('本次探测') }}</p>
+      <div class="admin-diagnostic-grid"><article :class="{ unhealthy: !diagnostics.dependencies.ready }"><small>{{ t('依赖') }}</small><strong>{{ t(dependencyText) }}</strong><span>{{ t('探测确认') }} {{ time(diagnostics.dependencies.checked_at, true) }}</span><span v-if="diagnostics.dependencies.probe_pending">{{ t('原探测仍在运行，后续读取会核对它。') }}</span></article><article><small>{{ t('账目异常') }}</small><strong>{{ diagnostics.accounting_mismatches }} {{ t('个知识库') }}</strong><span>{{ t('需核对登记对象与计费用量') }}</span></article><article><small>{{ t('回收待核对') }}</small><strong>{{ diagnostics.pending_reclamation_objects }} {{ t('个对象') }}</strong><span>{{ t('使用原回收计划继续') }}</span></article></div>
+      <p v-if="diagnostics.upload_maintenance" class="surface-intro admin-maintenance">{{ t('最近暂存清理') }} {{ time(diagnostics.upload_maintenance.finished_at) }} · {{ diagnostics.upload_maintenance.duration_ms }} {{ t('ms · 删除') }} {{ diagnostics.upload_maintenance.removed }} {{ t('个 · 文件系统失败') }} {{ diagnostics.upload_maintenance.filesystem_failures }} {{ t('/ 元数据失败') }} {{ diagnostics.upload_maintenance.metadata_failures }}<br>{{ t('累计删除') }} {{ diagnostics.upload_maintenance.total_removed }} {{ t('个 · 累计失败') }} {{ diagnostics.upload_maintenance.total_failures }} {{ t('次') }}</p>
     </template>
   </section>
   <section class="surface admin-accounts" aria-labelledby="admin-title">
-    <div class="surface-heading"><div><p>Accounts &amp; policies</p><h2 id="admin-title">账户与配额</h2></div><div class="admin-heading-actions"><button class="secondary-button" :disabled="locked" @click="openCreate">开通账户</button><button class="secondary-button" :disabled="locked" @click="load(true)">刷新管理数据</button></div></div>
-    <p v-if="failure" class="operations-error" role="alert">{{ failure }}</p><p v-if="notice" class="storage-notice" role="status">{{ notice }}</p>
-    <p v-if="readBusy" class="operations-updated" role="status">正在读取账户和资源…</p>
+    <div class="surface-heading"><div><p>{{ t('Accounts & policies') }}</p><h2 id="admin-title">{{ t('账户与配额') }}</h2></div><div class="admin-heading-actions"><button class="secondary-button" :disabled="locked" @click="openCreate">{{ t('开通账户') }}</button><button class="secondary-button" :disabled="locked" @click="load(true)">{{ t('刷新管理数据') }}</button></div></div>
+    <p v-if="failure" class="operations-error" role="alert">{{ t(failure) }} {{ t(failureMore) }}{{ t(failureHint) }}</p><p v-if="notice" class="storage-notice" role="status">{{ t(notice, notice === '管理完成反馈' && completedAction ? { label: actionLabel(completedAction), date: time(completedTime) } : {}) }}</p>
+    <p v-if="readBusy" class="operations-updated" role="status">{{ t('正在读取账户和资源…') }}</p>
     <div class="admin-layout">
       <aside class="admin-directory">
-        <h3>账户列表</h3><p v-if="accounts" class="operations-updated">服务器确认 {{ time(accounts.confirmed_at) }}</p>
+        <h3>{{ t('账户列表') }}</h3><p v-if="accounts" class="operations-updated">{{ t('服务器确认') }} {{ time(accounts.confirmed_at) }}</p>
         <button v-for="account in accounts?.items" :key="account.id" class="admin-account-button" :class="{ selected: selectedId === account.id }" :disabled="locked" @click="selectAccount(account.id)"><strong>{{ account.username }}</strong><small>{{ account.id }}</small></button>
-        <nav class="admin-pagination" aria-label="管理账户分页"><button class="secondary-button" :disabled="locked || !previous.length" @click="pageAccounts(false)">上一页</button><span>{{ previous.length + 1 }}</span><button class="secondary-button" :disabled="locked || !accounts?.next_before" @click="pageAccounts(true)">下一页</button></nav>
+        <nav class="admin-pagination" :aria-label="t('管理账户分页')"><button class="secondary-button" :disabled="locked || !previous.length" @click="pageAccounts(false)">{{ t('上一页') }}</button><span>{{ previous.length + 1 }}</span><button class="secondary-button" :disabled="locked || !accounts?.next_before" @click="pageAccounts(true)">{{ t('下一页') }}</button></nav>
       </aside>
       <div class="admin-resources">
         <template v-if="details">
-          <div class="admin-account-heading"><div><h3>{{ details.account.username }}</h3><code>{{ details.account.id }}</code></div><span class="secure-badge">{{ stale ? '待刷新' : '服务器确认' }}</span></div>
-          <p class="operations-updated">{{ time(details.confirmed_at) }} · {{ details.totals.vault_count }} 个知识库 · 登记 {{ bytes(details.totals.charged_bytes) }} / 配额 {{ bytes(details.totals.quota_bytes) }}</p>
-          <div class="admin-default"><span>新知识库默认配额 <strong>{{ bytes(details.policy.default_quota) }}</strong></span><button class="secondary-button" :disabled="locked || stale" @click="chooseDefault">调整默认配额</button></div>
-          <h3>知识库</h3><p v-if="!details.vaults.length" class="empty-state">本页没有知识库。</p>
-          <div class="admin-resource-list"><article v-for="vault in details.vaults" :key="vault.id" class="admin-resource"><div><strong>{{ vault.name }}</strong><small>{{ vault.id }}</small><p>登记 {{ bytes(vault.used) }} · 上传预留 {{ bytes(vault.reserved_bytes) }} · 配额 {{ bytes(vault.quota) }}</p></div><button class="secondary-button" :disabled="locked || stale" @click="chooseVault(vault)">调整配额</button></article></div>
-          <nav class="admin-pagination" aria-label="管理知识库分页"><button class="secondary-button" :disabled="locked || !vaultPrevious.length" @click="pageResources('vault',false)">上一页</button><span>{{ vaultPrevious.length + 1 }}</span><button class="secondary-button" :disabled="locked || !details.vaults_next_before" @click="pageResources('vault',true)">下一页</button></nav>
-          <h3>设备</h3><div class="admin-resource-list"><article v-for="device in details.devices" :key="device.id" class="admin-resource"><div><strong>{{ device.name }}</strong><small>{{ device.id }}</small><p>{{ device.revoked ? '已撤销' : '可访问' }}{{ device.id === api.deviceId ? ' · 当前设备' : '' }}</p></div><button v-if="!device.revoked" class="danger-button" :disabled="locked || stale" @click="chooseDevice(device)">撤销设备</button></article></div>
-          <nav class="admin-pagination" aria-label="管理设备分页"><button class="secondary-button" :disabled="locked || !devicePrevious.length" @click="pageResources('device',false)">上一页</button><span>{{ devicePrevious.length + 1 }}</span><button class="secondary-button" :disabled="locked || !details.devices_next_before" @click="pageResources('device',true)">下一页</button></nav>
+          <div class="admin-account-heading"><div><h3>{{ details.account.username }}</h3><code>{{ details.account.id }}</code></div><span class="secure-badge">{{ stale ? t('待刷新') : t('服务器确认') }}</span></div>
+          <p class="operations-updated">{{ time(details.confirmed_at) }} · {{ details.totals.vault_count }} {{ t('个知识库 · 登记') }} {{ bytes(details.totals.charged_bytes) }} {{ t('/ 配额') }} {{ bytes(details.totals.quota_bytes) }}</p>
+          <div class="admin-default"><span>{{ t('新知识库默认配额') }} <strong>{{ bytes(details.policy.default_quota) }}</strong></span><button class="secondary-button" :disabled="locked || stale" @click="chooseDefault">{{ t('调整默认配额') }}</button></div>
+          <h3>{{ t('知识库') }}</h3><p v-if="!details.vaults.length" class="empty-state">{{ t('本页没有知识库。') }}</p>
+          <div class="admin-resource-list"><article v-for="vault in details.vaults" :key="vault.id" class="admin-resource"><div><strong>{{ vault.name }}</strong><small>{{ vault.id }}</small><p>{{ t('登记') }} {{ bytes(vault.used) }} {{ t('· 上传预留') }} {{ bytes(vault.reserved_bytes) }} {{ t('· 配额') }} {{ bytes(vault.quota) }}</p></div><button class="secondary-button" :disabled="locked || stale" @click="chooseVault(vault)">{{ t('调整配额') }}</button></article></div>
+          <nav class="admin-pagination" :aria-label="t('管理知识库分页')"><button class="secondary-button" :disabled="locked || !vaultPrevious.length" @click="pageResources('vault',false)">{{ t('上一页') }}</button><span>{{ vaultPrevious.length + 1 }}</span><button class="secondary-button" :disabled="locked || !details.vaults_next_before" @click="pageResources('vault',true)">{{ t('下一页') }}</button></nav>
+          <h3>{{ t('设备') }}</h3><div class="admin-resource-list"><article v-for="device in details.devices" :key="device.id" class="admin-resource"><div><strong>{{ device.name }}</strong><small>{{ device.id }}</small><p>{{ device.revoked ? t('已撤销') : t('可访问') }}{{ device.id === api.deviceId ? t(' · 当前设备') : '' }}</p></div><button v-if="!device.revoked" class="danger-button" :disabled="locked || stale" @click="chooseDevice(device)">{{ t('撤销设备') }}</button></article></div>
+          <nav class="admin-pagination" :aria-label="t('管理设备分页')"><button class="secondary-button" :disabled="locked || !devicePrevious.length" @click="pageResources('device',false)">{{ t('上一页') }}</button><span>{{ devicePrevious.length + 1 }}</span><button class="secondary-button" :disabled="locked || !details.devices_next_before" @click="pageResources('device',true)">{{ t('下一页') }}</button></nav>
         </template>
-        <p v-else-if="!readBusy" class="empty-state">选择账户查看知识库、配额和设备。</p>
+        <p v-else-if="!readBusy" class="empty-state">{{ t('选择账户查看知识库、配额和设备。') }}</p>
       </div>
     </div>
     <form v-if="!intent" ref="createPanel" tabindex="-1" class="admin-create" @submit.prevent="prepareCreate">
-      <h3>开通新账户</h3><fieldset :disabled="locked"><div class="admin-form-grid"><label>新账户名<input v-model="newUsername" autocomplete="off" maxlength="80" required></label><label>默认配额<div class="admin-quota"><input v-model="newQuota" type="text" inputmode="decimal" maxlength="64" required aria-label="新账户默认配额"><select v-model="newUnit" aria-label="新账户配额单位"><option v-for="item in units" :key="item.value" :value="item.value">{{ item.name }}</option></select></div></label><label>新账户密码<input v-model="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label><label>确认新账户密码<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label></div><button class="secondary-button" type="submit">审核新账户</button></fieldset>
+      <h3>{{ t('开通新账户') }}</h3><fieldset :disabled="locked"><div class="admin-form-grid"><label>{{ t('新账户名') }}<input v-model="newUsername" autocomplete="off" maxlength="80" required></label><label>{{ t('默认配额') }}<div class="admin-quota"><input v-model="newQuota" type="text" inputmode="decimal" maxlength="64" required :aria-label="t('新账户默认配额')"><select v-model="newUnit" :aria-label="t('新账户配额单位')"><option v-for="item in units" :key="item.value" :value="item.value">{{ item.name }}</option></select></div></label><label>{{ t('新账户密码') }}<input v-model="password" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label><label>{{ t('确认新账户密码') }}<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label></div><button class="secondary-button" type="submit">{{ t('审核新账户') }}</button></fieldset>
     </form>
-    <form v-if="review && !intent" ref="reviewPanel" tabindex="-1" class="admin-review" @submit.prevent="prepareReview"><h3>{{ review.label }}</h3><template v-if="review.kind !== 'revoke_device'"><label>新配额<div class="admin-quota"><input v-model="amount" type="text" inputmode="decimal" maxlength="64" required><select v-model="unit" aria-label="新配额单位"><option v-for="item in units" :key="item.value" :value="item.value">{{ item.name }}</option></select></div></label><p>{{ review.kind === 'default_quota' ? '此策略用于之后创建的知识库。' : '新配额须覆盖登记对象与有效上传预留。' }}</p></template><p v-else>撤销后，此设备的下一次请求会被拒绝。</p><button class="secondary-button" type="submit" :disabled="locked || stale">审核管理操作</button></form>
-    <div v-if="intent" ref="reviewPanel" tabindex="-1" class="admin-review"><h3>确认管理操作</h3><p>{{ intent.label }}</p><code>操作 {{ intent.body.operation_id }}</code><p v-if="intent.kind !== 'revoke_device'">{{ intent.kind === 'create_account' ? '新账户默认配额' : '新配额' }} {{ bytes(intent.kind === 'create_account' ? intent.body.default_quota : intent.body.quota) }} · 精确 {{ intent.kind === 'create_account' ? intent.body.default_quota : intent.body.quota }} 字节</p><p v-else>此设备的下一次认证请求将被拒绝。</p>
-      <label v-if="!attempted" class="admin-ack"><input v-model="acknowledged" type="checkbox">我已核对账户、资源和配额</label><button v-if="!attempted" class="danger-button" :disabled="!acknowledged" @click="send()">确认执行管理操作</button>
-      <p v-if="mutationBusy" role="status">正在请求，请保留原操作编号…</p><button v-if="attempted" class="secondary-button" :disabled="mutationBusy" @click="reconcile">查询原管理结果</button><button v-if="receipt?.state === 'not_found'" class="danger-button" :disabled="mutationBusy" @click="send(true)">按原编号重试管理操作</button><button class="secondary-button" :disabled="mutationBusy" @click="closeIntent">结束本地核对</button>
-      <p v-if="receipt" class="operations-updated">核对确认 {{ time(receipt.confirmed_at) }} · {{ receipt.state === 'not_found' ? '未找到原回执' : '已完成' }}</p>
+    <form v-if="review && !intent" ref="reviewPanel" tabindex="-1" class="admin-review" @submit.prevent="prepareReview"><h3>{{ actionLabel(review) }}</h3><template v-if="review.kind !== 'revoke_device'"><label>{{ t('新配额') }}<div class="admin-quota"><input v-model="amount" type="text" inputmode="decimal" maxlength="64" required><select v-model="unit" :aria-label="t('新配额单位')"><option v-for="item in units" :key="item.value" :value="item.value">{{ item.name }}</option></select></div></label><p>{{ review.kind === 'default_quota' ? t('此策略用于之后创建的知识库。') : t('新配额须覆盖登记对象与有效上传预留。') }}</p></template><p v-else>{{ t('撤销后，此设备的下一次请求会被拒绝。') }}</p><button class="secondary-button" type="submit" :disabled="locked || stale">{{ t('审核管理操作') }}</button></form>
+    <div v-if="intent" ref="reviewPanel" tabindex="-1" class="admin-review"><h3>{{ t('确认管理操作') }}</h3><p>{{ actionLabel(intent) }}</p><code>{{ t('操作') }} {{ intent.body.operation_id }}</code><p v-if="intent.kind !== 'revoke_device'">{{ intent.kind === 'create_account' ? t('新账户默认配额') : t('新配额') }} {{ bytes(intent.kind === 'create_account' ? intent.body.default_quota : intent.body.quota) }} {{ t('· 精确') }} {{ intent.kind === 'create_account' ? intent.body.default_quota : intent.body.quota }} {{ t('字节') }}</p><p v-else>{{ t('此设备的下一次认证请求将被拒绝。') }}</p>
+      <label v-if="!attempted" class="admin-ack"><input v-model="acknowledged" type="checkbox">{{ t('我已核对账户、资源和配额') }}</label><button v-if="!attempted" class="danger-button" :disabled="!acknowledged" @click="send()">{{ t('确认执行管理操作') }}</button>
+      <p v-if="mutationBusy" role="status">{{ t('正在请求，请保留原操作编号…') }}</p><button v-if="attempted" class="secondary-button" :disabled="mutationBusy" @click="reconcile">{{ t('查询原管理结果') }}</button><button v-if="receipt?.state === 'not_found'" class="danger-button" :disabled="mutationBusy" @click="send(true)">{{ t('按原编号重试管理操作') }}</button><button class="secondary-button" :disabled="mutationBusy" @click="closeIntent">{{ t('结束本地核对') }}</button>
+      <p v-if="receipt" class="operations-updated">{{ t('核对确认') }} {{ time(receipt.confirmed_at) }} · {{ receipt.state === 'not_found' ? t('未找到原回执') : t('已完成') }}</p>
     </div>
   </section>
-  <section class="surface admin-guide"><div class="surface-heading"><div><p>Deploy &amp; recover</p><h2>部署与恢复</h2></div></div><ol><li><strong>首次部署：</strong>初始化数据库和对象存储，固定初始账户凭据，再配置获授权的管理员账户。</li><li><strong>升级前：</strong>结束未完成上传，创建新的备份并完整校验，核对下面的运维回执；保持原数据库和对象桶。</li><li><strong>需要恢复时：</strong>使用空数据库与空对象桶，恢复后检查依赖，再接入两台测试设备确认同步。</li></ol><p><a href="https://github.com/KiriAky107/Sync-for-OpenNexus#backup-and-restore" target="_blank" rel="noreferrer">查看部署、备份与恢复命令</a></p></section>
+  <section class="surface admin-guide"><div class="surface-heading"><div><p>{{ t('Deploy & recover') }}</p><h2>{{ t('部署与恢复') }}</h2></div></div><ol><li><strong>{{ t('首次部署：') }}</strong>{{ t('初始化数据库和对象存储，固定初始账户凭据，再配置获授权的管理员账户。') }}</li><li><strong>{{ t('升级前：') }}</strong>{{ t('结束未完成上传，创建新的备份并完整校验，核对下面的运维回执；保持原数据库和对象桶。') }}</li><li><strong>{{ t('需要恢复时：') }}</strong>{{ t('使用空数据库与空对象桶，恢复后检查依赖，再接入两台测试设备确认同步。') }}</li></ol><p><a href="https://github.com/KiriAky107/Sync-for-OpenNexus#backup-and-restore" target="_blank" rel="noreferrer">{{ t('查看部署、备份与恢复命令') }}</a></p></section>
   <ReclamationPanel :api="api" :disabled="mutationBusy || !!intent" @expired="emit('expired')" @forbidden="emit('forbidden')" />
   <DeviceProgressPanel v-if="details" :key="selectedId" :api="api" :vaults="details.vaults" :account="selectedId" :disabled="locked || stale" @expired="emit('expired')" @forbidden="emit('forbidden')" />
 </template>

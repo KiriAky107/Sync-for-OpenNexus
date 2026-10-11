@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t, formatDate } from './locale.ts'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { SyncApi, SyncApiError, type FilePage, type HistoryPage, type Preview, type RestoreRequest, type RestoreTarget, type Revision, type Vault } from './api'
 import { compareText } from './textDiff'
@@ -12,6 +13,7 @@ const historicalPreview = shallowRef<Preview | null>(null), currentPreview = sha
 const targetPath = ref(''), target = shallowRef<RestoreTarget | null>(null), acknowledged = ref(false)
 const listBusy = ref(false), detailBusy = ref(false), targetBusy = ref(false), restoring = ref(false)
 const failure = ref(''), notice = ref(''), result = shallowRef<Revision | null>(null)
+const noticeSequence = ref(0), noticeSuffix = ref<string[]>([])
 const intent = shallowRef<Readonly<RestoreRequest> | null>(null), retryAllowed = ref(false)
 let listTicket = 0, detailTicket = 0, targetTicket = 0, alive = true
 let fileFilter = { q: '', includeDeleted: false }
@@ -22,7 +24,7 @@ const targetValid = computed(() => target.value && !target.value.occupied && tar
 const canRestore = computed(() => source.value?.operation === 'put' && source.value.sequence !== head.value?.sequence && targetValid.value && acknowledged.value && !detailBusy.value && !targetBusy.value && !locked.value)
 
 function bytes(value: number) { return value < 1024 ? `${value} B` : value < 1024 ** 2 ? `${(value / 1024).toFixed(1)} KiB` : `${(value / 1024 ** 2).toFixed(1)} MiB` }
-function time(value?: number | null) { return value == null ? '时间未知（旧修订）' : new Date(value * 1000).toLocaleString('zh-CN', { hour12: false }) }
+function time(value?: number | null) { return value == null ? t('时间未知（旧修订）') : formatDate(value * 1000) }
 function errorText(error: unknown) {
   const code = error instanceof Error ? error.message : ''
   const messages: Record<string, string> = {
@@ -36,10 +38,10 @@ function errorText(error: unknown) {
   return messages[code] ?? '请求未完成，已显示的内容尚未刷新。请检查连接后重试。'
 }
 function unsupported(preview: Preview) {
-  if (preview.kind === 'deleted') return '此版本是删除记录，没有文件内容。'
+  if (preview.kind === 'deleted') return t('此版本是删除记录，没有文件内容。')
   if (preview.kind !== 'unsupported') return ''
   const reasons: Record<string, string> = { PREVIEW_TOO_LARGE: '文件超过安全预览大小', UNSUPPORTED_TYPE: '此格式不提供在线预览', NOT_UTF8: '文本不是 UTF-8 编码', BINARY_CONTENT: '内容包含二进制数据', INVALID_IMAGE: '图片无法安全解码', IMAGE_TOO_LARGE: '图片像素数量超过限制' }
-  return (reasons[preview.reason] ?? '此内容无法在线预览') + '。恢复仍使用原始对象字节，请核对摘要和大小。'
+  return t('预览限制说明', { reason: t(reasons[preview.reason] ?? '此内容无法在线预览') })
 }
 function clearDetail() {
   detailTicket++; targetTicket++
@@ -104,14 +106,14 @@ async function checkTarget() {
 }
 async function acceptResult(receipt: Revision) {
   result.value = receipt; intent.value = null; retryAllowed.value = false; acknowledged.value = false; target.value = null
-  notice.value = `恢复已完成，创建修订 ${receipt.sequence}。`
+  notice.value = '恢复完成反馈'; noticeSequence.value = receipt.sequence; noticeSuffix.value = []
   try {
     const page = await props.api.history(vaultId.value, fileId.value)
     if (!alive) return
     history.value = page; head.value = page.current; currentPreview.value = null
-    notice.value += (page.current?.sequence ?? 0) > receipt.sequence ? ' 此后已有其他编辑，当前版本已保留。' : ' 其他设备将在同步时收到此修订。'
+    noticeSuffix.value.push((page.current?.sequence ?? 0) > receipt.sequence ? ' 此后已有其他编辑，当前版本已保留。' : ' 其他设备将在同步时收到此修订。')
   } catch (error) {
-    if (alive) { failure.value = errorText(error); notice.value += ' 历史列表尚未刷新，完成回执已确认。' }
+    if (alive) { failure.value = errorText(error); noticeSuffix.value.push(' 历史列表尚未刷新，完成回执已确认。') }
   }
   emit('refreshed')
 }
@@ -154,74 +156,74 @@ onBeforeUnmount(() => { alive = false; listTicket++; detailTicket++; targetTicke
 
 <template>
   <section class="surface history-surface" aria-labelledby="history-title">
-    <div class="surface-heading"><div><p>File history</p><h2 id="history-title">文件与历史</h2></div><span class="secure-badge">恢复创建新修订</span></div>
-    <p class="surface-intro">浏览远端文件与保留修订。移动沿用文件身份，恢复前核对当前内容、目标路径与历史来源。</p>
-    <div v-if="!vaults.length" class="empty-state">创建远端知识库后，已同步文件会出现在这里。</div>
+    <div class="surface-heading"><div><p>{{ t('File history') }}</p><h2 id="history-title">{{ t('文件与历史') }}</h2></div><span class="secure-badge">{{ t('恢复创建新修订') }}</span></div>
+    <p class="surface-intro">{{ t('浏览远端文件与保留修订。移动沿用文件身份，恢复前核对当前内容、目标路径与历史来源。') }}</p>
+    <div v-if="!vaults.length" class="empty-state">{{ t('创建远端知识库后，已同步文件会出现在这里。') }}</div>
     <template v-else>
       <form class="history-filters" @submit.prevent="loadFiles()">
-        <label>知识库<select v-model="vaultId" :disabled="locked"><option v-for="vault in vaults" :key="vault.id" :value="vault.id">{{ vault.name }}</option></select></label>
-        <label>搜索路径<input v-model="query" maxlength="120" :disabled="locked" placeholder="输入文件名或相对路径"></label>
-        <label class="checkbox-label"><input v-model="includeDeleted" type="checkbox" :disabled="locked">包含删除记录</label>
-        <button class="secondary-button" type="submit" :disabled="listBusy || locked">{{ listBusy ? '正在读取…' : '刷新文件' }}</button>
+        <label>{{ t('知识库') }}<select v-model="vaultId" :disabled="locked"><option v-for="vault in vaults" :key="vault.id" :value="vault.id">{{ vault.name }}</option></select></label>
+        <label>{{ t('搜索路径') }}<input v-model="query" maxlength="120" :disabled="locked" :placeholder="t('输入文件名或相对路径')"></label>
+        <label class="checkbox-label"><input v-model="includeDeleted" type="checkbox" :disabled="locked">{{ t('包含删除记录') }}</label>
+        <button class="secondary-button" type="submit" :disabled="listBusy || locked">{{ listBusy ? t('正在读取…') : t('刷新文件') }}</button>
       </form>
-      <p v-if="failure" class="history-error" role="alert">{{ failure }}</p>
-      <p v-if="notice" class="history-notice" role="status">{{ notice }}</p>
-      <p v-if="result" class="history-notice">完成回执：修订 {{ result.sequence }} · 操作 {{ result.operation_id }} · {{ result.path }}</p>
+      <p v-if="failure" class="history-error" role="alert">{{ t(failure) }}</p>
+      <p v-if="notice" class="history-notice" role="status">{{ t(notice, { sequence: noticeSequence }) }}{{ notice === '恢复完成反馈' ? noticeSuffix.map(part => t(part)).join('') : '' }}</p>
+      <p v-if="result" class="history-notice">{{ t('完成回执：修订') }} {{ result.sequence }} {{ t('· 操作') }} {{ result.operation_id }} · {{ result.path }}</p>
       <div v-if="intent" class="pending-box" role="status">
-        <strong>{{ restoring ? '正在确认恢复…' : '恢复结果待核对' }}</strong><p>操作 {{ intent.operation_id }} · 历史修订 {{ intent.source_revision }} → {{ intent.path }}</p>
-        <p>请保持此页面以保留待核对操作。已收到回执的恢复会直接显示；重试复用原操作身份。</p>
-        <button class="secondary-button" :disabled="restoring" @click="reconcile">核对恢复结果</button>
-        <button v-if="retryAllowed" class="secondary-button" :disabled="restoring" @click="sendRestore">使用原操作重试</button>
+        <strong>{{ restoring ? t('正在确认恢复…') : t('恢复结果待核对') }}</strong><p>{{ t('操作') }} {{ intent.operation_id }} {{ t('· 历史修订') }} {{ intent.source_revision }} → {{ intent.path }}</p>
+        <p>{{ t('请保持此页面以保留待核对操作。已收到回执的恢复会直接显示；重试复用原操作身份。') }}</p>
+        <button class="secondary-button" :disabled="restoring" @click="reconcile">{{ t('核对恢复结果') }}</button>
+        <button v-if="retryAllowed" class="secondary-button" :disabled="restoring" @click="sendRestore">{{ t('使用原操作重试') }}</button>
       </div>
       <div class="history-columns">
         <div class="file-column">
-          <p class="snapshot-note" v-if="files">文件列表读取到知识库修订 {{ files.boundary }}，新改动可点击刷新。</p>
-          <p v-if="files && !files.items.length" class="empty-state">没有匹配的文件{{ includeDeleted ? '或删除记录' : '' }}。</p>
+          <p class="snapshot-note" v-if="files">{{ t('文件列表读取到知识库修订') }} {{ files.boundary }}{{ t('，新改动可点击刷新。') }}</p>
+          <p v-if="files && !files.items.length" class="empty-state">{{ t('没有匹配的文件') }}{{ includeDeleted ? t('或删除记录') : '' }}。</p>
           <button v-for="file in files?.items" :key="file.file_id" class="file-entry" :class="{ selected: fileId === file.file_id }" :disabled="locked" @click="loadHistory(file.file_id)">
-            <strong>{{ file.path }}</strong><span>{{ file.operation === 'delete' ? '已删除' : '当前文件' }} · 修订 {{ file.sequence }} · {{ bytes(file.size) }}</span><small>{{ time(file.created_at) }}</small>
+            <strong>{{ file.path }}</strong><span>{{ file.operation === 'delete' ? t('已删除') : t('当前文件') }} {{ t('· 修订') }} {{ file.sequence }} · {{ bytes(file.size) }}</span><small>{{ time(file.created_at) }}</small>
           </button>
-          <button v-if="files?.has_more" class="secondary-button" :disabled="listBusy || locked" @click="loadFiles(true)">加载更多文件</button>
+          <button v-if="files?.has_more" class="secondary-button" :disabled="listBusy || locked" @click="loadFiles(true)">{{ t('加载更多文件') }}</button>
         </div>
         <div class="revision-column">
-          <p v-if="!fileId" class="empty-state">选择文件查看历史。</p>
+          <p v-if="!fileId" class="empty-state">{{ t('选择文件查看历史。') }}</p>
           <template v-else>
-            <div class="timeline-heading"><h3>{{ head?.path }}</h3><button class="secondary-button" :disabled="detailBusy || locked" @click="loadHistory(fileId)">刷新历史</button></div>
-            <p class="snapshot-note">身份 {{ fileId }}<br>当前修订 {{ head?.sequence }} · {{ head?.operation === 'delete' ? '已删除' : '有内容' }}</p>
+            <div class="timeline-heading"><h3>{{ head?.path }}</h3><button class="secondary-button" :disabled="detailBusy || locked" @click="loadHistory(fileId)">{{ t('刷新历史') }}</button></div>
+            <p class="snapshot-note">{{ t('身份') }} {{ fileId }}<br>{{ t('当前修订') }} {{ head?.sequence }} · {{ head?.operation === 'delete' ? t('已删除') : t('有内容') }}</p>
             <div class="timeline">
               <button v-for="revision in history?.items" :key="revision.sequence" :disabled="locked" class="revision-entry" :class="{ selected: source?.sequence === revision.sequence }" @click="chooseRevision(revision)">
-                <strong>修订 {{ revision.sequence }}<span>{{ revision.operation === 'delete' ? '删除' : revision.restored_from != null ? '恢复' : '内容 / 路径修改' }}</span><span v-if="revision.sequence === head?.sequence">当前</span></strong>
-                <small>{{ time(revision.created_at) }} · {{ revision.device_name || revision.device_id }}</small><small>{{ revision.path }} · {{ bytes(revision.size) }}<template v-if="revision.restored_from != null"> · 恢复自修订 {{ revision.restored_from }}</template></small>
+                <strong>{{ t('修订') }} {{ revision.sequence }}<span>{{ revision.operation === 'delete' ? t('删除') : revision.restored_from != null ? t('恢复') : t('内容 / 路径修改') }}</span><span v-if="revision.sequence === head?.sequence">{{ t('当前') }}</span></strong>
+                <small>{{ time(revision.created_at) }} · {{ revision.device_name || revision.device_id }}</small><small>{{ revision.path }} · {{ bytes(revision.size) }}<template v-if="revision.restored_from != null"> {{ t('· 恢复自修订') }} {{ revision.restored_from }}</template></small>
               </button>
             </div>
-            <button v-if="history?.has_more" class="secondary-button" :disabled="detailBusy || locked" @click="loadHistory(fileId, true)">加载更早修订</button>
-            <p v-if="detailBusy" class="snapshot-note" role="status">正在读取修订与内容…</p>
+            <button v-if="history?.has_more" class="secondary-button" :disabled="detailBusy || locked" @click="loadHistory(fileId, true)">{{ t('加载更早修订') }}</button>
+            <p v-if="detailBusy" class="snapshot-note" role="status">{{ t('正在读取修订与内容…') }}</p>
           </template>
         </div>
       </div>
       <div v-if="source && head && historicalPreview && currentPreview" class="review-box">
-        <h3>审核修订 {{ source.sequence }} → 当前修订 {{ head.sequence }}</h3>
+        <h3>{{ t('审核修订') }} {{ source.sequence }} {{ t('→ 当前修订') }} {{ head.sequence }}</h3>
         <div class="preview-pair">
           <article v-for="item in [{ title: '当前内容', preview: currentPreview }, { title: '历史内容', preview: historicalPreview }]" :key="item.title">
-            <h4>{{ item.title }} · {{ bytes(item.preview.size) }}</h4><p class="preview-path">{{ item.preview.path }}</p>
+            <h4>{{ t(item.title) }} · {{ bytes(item.preview.size) }}</h4><p class="preview-path">{{ item.preview.path }}</p>
             <pre v-if="item.preview.kind === 'text'" class="content-preview">{{ item.preview.text }}</pre>
-            <template v-else-if="item.preview.kind === 'image'"><img :src="'data:image/png;base64,' + item.preview.data" :alt="item.title + '图片预览'" class="image-preview"><small v-if="item.preview.first_frame_only">动态图仅预览第一帧。</small></template>
+            <template v-else-if="item.preview.kind === 'image'"><img :src="'data:image/png;base64,' + item.preview.data" :alt="t(item.title) + ' ' + t('图片预览')" class="image-preview"><small v-if="item.preview.first_frame_only">{{ t('动态图仅预览第一帧。') }}</small></template>
             <p v-else class="empty-state">{{ unsupported(item.preview) }}</p>
-            <p class="content-hash">SHA-256 {{ item.preview.hash ?? '无内容' }}</p>
+            <p class="content-hash">SHA-256 {{ item.preview.hash ?? t('无内容') }}</p>
           </article>
         </div>
         <template v-if="comparison">
-          <p v-if="comparison.kind === 'equal'" class="snapshot-note">预览文本相同。<template v-if="source.hash !== head.hash">原始字节摘要不同，可能包含编码或 BOM 差异。</template></p>
-          <p v-else-if="comparison.kind === 'large'" class="snapshot-note">内容较长，请对照两侧完整预览；此处不生成逐行差异。</p>
-          <div v-else class="text-diff" aria-label="当前与历史的文本差异"><div v-for="(line, index) in comparison.lines" :key="index" :class="line.kind"><span>{{ line.current ?? '' }}</span><span>{{ line.source ?? '' }}</span><code>{{ line.kind === 'remove' ? '− ' : line.kind === 'add' ? '+ ' : '  ' }}{{ line.text }}</code></div></div>
+          <p v-if="comparison.kind === 'equal'" class="snapshot-note">{{ t('预览文本相同。') }}<template v-if="source.hash !== head.hash">{{ t('原始字节摘要不同，可能包含编码或 BOM 差异。') }}</template></p>
+          <p v-else-if="comparison.kind === 'large'" class="snapshot-note">{{ t('内容较长，请对照两侧完整预览；此处不生成逐行差异。') }}</p>
+          <div v-else class="text-diff" :aria-label="t('当前与历史的文本差异')"><div v-for="(line, index) in comparison.lines" :key="index" :class="line.kind"><span>{{ line.current ?? '' }}</span><span>{{ line.source ?? '' }}</span><code>{{ line.kind === 'remove' ? '− ' : line.kind === 'add' ? '+ ' : '  ' }}{{ line.text }}</code></div></div>
         </template>
-        <p class="snapshot-note">删除记录可从此前内容恢复。默认沿用当前路径；如需其他位置，请先修改目标路径并核对占用。</p>
+        <p class="snapshot-note">{{ t('删除记录可从此前内容恢复。默认沿用当前路径；如需其他位置，请先修改目标路径并核对占用。') }}</p>
         <div v-if="source.operation === 'put' && source.sequence !== head.sequence && !result" class="restore-form">
-          <label>恢复目标路径<input v-model="targetPath" :disabled="locked || detailBusy" maxlength="768" autocomplete="off"></label>
-          <button class="secondary-button" :disabled="locked || targetBusy || detailBusy || !targetPath" @click="checkTarget">{{ targetBusy ? '正在核对…' : '核对目标路径' }}</button>
-          <p v-if="target?.occupied" class="history-error">路径与“{{ target.occupied.path }}”冲突，请选择其他位置。</p>
-          <p v-else-if="targetValid" class="history-notice">目标路径可用，已核对当前修订 {{ target?.current_revision }}。提交时会再次检查并发修改与路径占用。</p>
-          <label class="checkbox-label"><input v-model="acknowledged" type="checkbox" :disabled="!targetValid || locked">已核对当前内容、历史来源和目标路径，确认以原始字节创建新修订。</label>
-          <button class="primary-button" :disabled="!canRestore" @click="restore">确认恢复为新修订</button>
+          <label>{{ t('恢复目标路径') }}<input v-model="targetPath" :disabled="locked || detailBusy" maxlength="768" autocomplete="off"></label>
+          <button class="secondary-button" :disabled="locked || targetBusy || detailBusy || !targetPath" @click="checkTarget">{{ targetBusy ? t('正在核对…') : t('核对目标路径') }}</button>
+          <p v-if="target?.occupied" class="history-error">{{ t('路径与“') }}{{ target.occupied.path }}{{ t('”冲突，请选择其他位置。') }}</p>
+          <p v-else-if="targetValid" class="history-notice">{{ t('目标路径可用，已核对当前修订') }} {{ target?.current_revision }}{{ t('。提交时会再次检查并发修改与路径占用。') }}</p>
+          <label class="checkbox-label"><input v-model="acknowledged" type="checkbox" :disabled="!targetValid || locked">{{ t('已核对当前内容、历史来源和目标路径，确认以原始字节创建新修订。') }}</label>
+          <button class="primary-button" :disabled="!canRestore" @click="restore">{{ t('确认恢复为新修订') }}</button>
         </div>
       </div>
     </template>
