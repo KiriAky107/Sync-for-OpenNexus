@@ -13,24 +13,24 @@
   </p>
 
   <p>
-    <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.7.0"><img src="https://img.shields.io/badge/Version-0.7.0-5865f2?style=flat-square" alt="版本" /></a> <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml"><img src="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <img src="https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square" alt="Python 3.12+" /> <img src="https://img.shields.io/badge/API-FastAPI-05998b?style=flat-square" alt="FastAPI" /> <img src="https://img.shields.io/badge/Console-Vue_3-42b883?style=flat-square" alt="Vue 3" /> <img src="https://img.shields.io/badge/Metadata-PostgreSQL-4169e1?style=flat-square" alt="PostgreSQL" /> <img src="https://img.shields.io/badge/Objects-S3_compatible-f97316?style=flat-square" alt="S3-compatible storage" /> <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
+    <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.8.0"><img src="https://img.shields.io/badge/Version-0.8.0-5865f2?style=flat-square" alt="版本" /></a> <a href="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml"><img src="https://github.com/KiriAky107/Sync-for-OpenNexus/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <img src="https://img.shields.io/badge/Python-3.12%2B-3776ab?style=flat-square" alt="Python 3.12+" /> <img src="https://img.shields.io/badge/API-FastAPI-05998b?style=flat-square" alt="FastAPI" /> <img src="https://img.shields.io/badge/Console-Vue_3-42b883?style=flat-square" alt="Vue 3" /> <img src="https://img.shields.io/badge/Metadata-PostgreSQL-4169e1?style=flat-square" alt="PostgreSQL" /> <img src="https://img.shields.io/badge/Objects-S3_compatible-f97316?style=flat-square" alt="S3-compatible storage" /> <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="MIT License" /></a>
   </p>
 
 </div>
 
 ---
 
-当前版本： [v0.7.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.7.0)。
+当前版本： [v0.8.0](https://github.com/KiriAky107/Sync-for-OpenNexus/releases/tag/v0.8.0)。
 
-0.7.0 支持审核并恢复文件历史、管理用量与中断的上传，并通过确认操作回收符合条件的对象。管理员可开通账户、设置配额、管理设备与查看诊断。文件历史仍无限保留。
+0.8.0 增加只读回收核对、明确的设备与同步进度、有界运维记录和中英文控制台。管理员可以查看冻结计划与诊断，而网页不增加回收执行入口。修订历史仍默认永久保留。
 
-## 0.7.0 更新
+## 0.8.0 更新
 
-- **审核历史恢复**：预览当前与历史内容、比较差异，核对当前版本和目标路径后恢复为新修订。
-- **用量与上传**：区分当前唯一对象、仅历史引用的对象、未引用对象和有效上传预留。分页查看上传，以记录的操作编号取消，未知结果先查询再重试。
-- **受保护的对象回收**：审核候选、核对引用和备份，隔离符合条件的对象后再次确认删除。中断操作可从持久回执续接。
-- **管理员控制台**：开通账户、设置精确配额、冻结账户与撤销设备。账户、知识库与设备分页由服务端校验角色，诊断显示确认时间。
-- **部署与恢复**：使用 PostgreSQL 和 S3 兼容存储部署，校验备份并恢复到空目标。恢复后保留设备撤销状态，获授权设备可继续同步。
+- **只读回收核对**：分页查看既有计划、冻结候选、保护统计和原计划状态；执行仍由独立 CLI 流程完成。
+- **设备与同步进度**：区分最近认证、服务端已确认提交和已生成变化位置；客户端是否收到或应用继续明确标为未知。
+- **运维观测**：保留最多 1,000 条有意义的清理记录，配额包含有效上传预留，并分别显示备份与校验时效。
+- **脱敏诊断**：按明确白名单导出 JSON，不包含凭据、身份、文件路径、对象哈希或原始内容。
+- **中英文控制台**：控制台、历史、存储、管理员、回收、设备和运维界面均可切换语言，不保存会话或凭据。
 
 ## 核心亮点
 
